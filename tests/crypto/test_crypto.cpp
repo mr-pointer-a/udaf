@@ -132,6 +132,35 @@ TEST(UdafCrypto, HmacSha256KnownVector) {
     EXPECT_EQ(r.value(), std::vector<std::uint8_t>(expected.begin(), expected.end()));
 }
 
+TEST(UdafCrypto, HmacSha256EmptyKeyRejected) {
+    // 空 key → INVALID_ARG（覆盖 hmac.cpp 行 38-40）
+    std::vector<std::uint8_t> empty_key;
+    std::vector<std::uint8_t> msg{'h','i'};
+    auto r = udaf::crypto::hmac_sha256(empty_key, msg);
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::INVALID_ARG);
+}
+
+TEST(UdafCrypto, HmacVerifyWrongLengthRejected) {
+    // expected 长度 ≠ 32 → INVALID_ARG（覆盖 hmac.cpp 行 80-82）
+    std::vector<std::uint8_t> key(32, 0xAA);
+    std::vector<std::uint8_t> msg{'h','i'};
+    std::vector<std::uint8_t> bad_expected(16, 0x00);  // 长度错误
+    auto r = udaf::crypto::hmac_sha256_verify(key, msg, bad_expected);
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::INVALID_ARG);
+}
+
+TEST(UdafCrypto, HmacVerifyMismatch) {
+    // 正确长度但内容不匹配 → CRYPTO_HMAC_MISMATCH（覆盖 hmac.cpp 行 87-88）
+    std::vector<std::uint8_t> key(32, 0xAA);
+    std::vector<std::uint8_t> msg{'h','i'};
+    std::vector<std::uint8_t> wrong_mac(32, 0xFF);
+    auto r = udaf::crypto::hmac_sha256_verify(key, msg, wrong_mac);
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::CRYPTO_HMAC_MISMATCH);
+}
+
 // ---------------- 2. PSK 握手 round-trip ----------------
 TEST(UdafCrypto, PskHandshakeRoundTrip) {
     std::mt19937_64 rng(0xC0FFEE);
@@ -340,6 +369,53 @@ TEST(UdafCrypto, KeystoreRoundTrip) {
     auto loaded = udaf::crypto::load_psk_from_file(p);
     ASSERT_TRUE(loaded.is_ok()) << "load_psk_from_file 失败";
     EXPECT_EQ(loaded.value(), psk.value());
+}
+
+TEST(UdafCrypto, KeystoreLoadMissingFile) {
+    // 文件不存在 → BIZ_FILE_NOT_FOUND（覆盖 keystore.cpp 行 35-36）
+    auto loaded = udaf::crypto::load_psk_from_file("/nonexistent/psk_xyz_12345.bin");
+    ASSERT_TRUE(loaded.is_err());
+    EXPECT_EQ(loaded.error(), udaf::core::ErrorCode::BIZ_FILE_NOT_FOUND);
+}
+
+TEST(UdafCrypto, KeystoreLoadBadMagic) {
+    // 文件 magic 不匹配 → SERIALIZE_VERSION_MISMATCH（覆盖行 41-43）
+    TmpDir tmp;
+    auto p = tmp.p() / "bad.bin";
+    {
+        std::ofstream f(p, std::ios::binary);
+        std::uint32_t wrong_magic = 0xDEADBEEF;
+        f.write(reinterpret_cast<const char*>(&wrong_magic), sizeof(wrong_magic));
+    }
+    auto loaded = udaf::crypto::load_psk_from_file(p);
+    ASSERT_TRUE(loaded.is_err());
+    EXPECT_EQ(loaded.error(), udaf::core::ErrorCode::SERIALIZE_VERSION_MISMATCH);
+}
+
+TEST(UdafCrypto, KeystoreLoadTruncated) {
+    // 文件 magic 对但 PSK 数据截断 → PROTOCOL_TRUNCATED_BUFFER（覆盖行 47-49）
+    TmpDir tmp;
+    auto p = tmp.p() / "trunc.bin";
+    {
+        std::ofstream f(p, std::ios::binary);
+        std::uint32_t magic = 0x50534B01;
+        f.write(reinterpret_cast<const char*>(&magic), sizeof(magic));
+        std::uint8_t partial[10] = {0};  // 只写 10B，应有 32B
+        f.write(reinterpret_cast<const char*>(partial), sizeof(partial));
+    }
+    auto loaded = udaf::crypto::load_psk_from_file(p);
+    ASSERT_TRUE(loaded.is_err());
+    EXPECT_EQ(loaded.error(), udaf::core::ErrorCode::PROTOCOL_TRUNCATED_BUFFER);
+}
+
+TEST(UdafCrypto, KeystoreSaveWrongLength) {
+    // psk 长度 ≠ 32 → INVALID_ARG（覆盖行 55-57）
+    TmpDir tmp;
+    auto p = tmp.p() / "wrong_len.bin";
+    std::vector<std::uint8_t> wrong_len(16, 0xAA);  // 长度错误
+    auto saved = udaf::crypto::save_psk_to_file(p, wrong_len);
+    ASSERT_TRUE(saved.is_err());
+    EXPECT_EQ(saved.error(), udaf::core::ErrorCode::INVALID_ARG);
 }
 
 // ---------------- 7. AES-GCM 加密开销（性能契约 #26） ----------------

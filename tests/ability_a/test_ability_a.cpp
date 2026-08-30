@@ -126,6 +126,37 @@ TEST(UdafRegistry, MoveSubscriptionHandle) {
     EXPECT_EQ(h.get(), nullptr);
 }
 
+TEST(UdafRegistry, SubscriptionHandleMoveAssign) {
+    // 覆盖 SubscriptionHandle 移动赋值（service_registry.cpp 行 17-25）
+    ServiceRegistry reg;
+    std::atomic<int> cnt{0};
+    auto h1 = reg.subscribe([&](RegistryEvent, const RegistryEntry&) { ++cnt; });
+    auto h2 = reg.subscribe([&](RegistryEvent, const RegistryEntry&) { ++cnt; });
+    ASSERT_NE(h1, nullptr);
+    ASSERT_NE(h2, nullptr);
+    auto id1 = h1->id();
+    auto id2 = h2->id();
+    ASSERT_NE(id1, id2);
+    // h1 = std::move(h2) → h1 应释放原订阅，接管 h2
+    h1 = std::move(h2);
+    EXPECT_EQ(h1->id(), id2);
+    EXPECT_EQ(h2.get(), nullptr);
+    // 触发事件 → 只有 h1 对应的回调（id2）应被通知
+    RegistryEntry e; e.node_id_ = "n1";
+    reg.register_node(e);
+    EXPECT_EQ(cnt.load(), 1);
+}
+
+TEST(UdafRegistry, SubscriptionHandleMoveSelfAssign) {
+    // 覆盖 service_registry.cpp 行 18 自赋值检查
+    ServiceRegistry reg;
+    auto h = reg.subscribe([](RegistryEvent, const RegistryEntry&) {});
+    ASSERT_NE(h, nullptr);
+    auto id = h->id();
+    h = std::move(h);  // 自赋值
+    EXPECT_EQ(h->id(), id);  // 仍有效
+}
+
 TEST(UdafRegistry, Capacity10000) {
     ServiceRegistry reg;
     for (int i = 0; i < 10000; ++i) {
@@ -339,6 +370,68 @@ TEST(UdafTransport, RecvTimeout) {
     ASSERT_TRUE(s.is_ok());
     auto r = s.value()->recv(50);
     EXPECT_EQ(r.error(), ErrorCode::NET_TIMEOUT);
+}
+
+TEST(UdafTransport, BindEaddrInUse) {
+    // 覆盖 udp_socket.cpp 行 47-49 端口占用 → RESOURCE_BUSY
+    auto s1 = UdpSocket::create(0);
+    ASSERT_TRUE(s1.is_ok());
+    auto port = s1.value()->bound_port();
+    auto s2 = UdpSocket::create(port);  // 同端口再次 bind
+    EXPECT_TRUE(s2.is_err());
+    EXPECT_EQ(s2.error(), ErrorCode::RESOURCE_BUSY);
+}
+
+TEST(UdafTransport, UnicastRateLimited) {
+    // 覆盖 udp_socket.cpp 行 130-132 单播频率限制
+    auto s = UdpSocket::create(0);
+    ASSERT_TRUE(s.is_ok());
+    auto r = UdpSocket::create(0);
+    ASSERT_TRUE(r.is_ok());
+    auto dst_port = r.value()->bound_port();
+    Endpoint dst{"127.0.0.1", dst_port, false};
+    std::vector<std::uint8_t> payload{1, 2, 3};
+    // 前 5 次单播应通过
+    for (int i = 0; i < 5; ++i) {
+        auto x = s.value()->send(payload, dst);
+        EXPECT_TRUE(x.is_ok()) << "iter " << i;
+    }
+    // 第 6 次应被限流
+    auto blocked = s.value()->send(payload, dst);
+    EXPECT_EQ(blocked.error(), ErrorCode::NET_RATE_LIMITED);
+}
+
+TEST(UdafTransport, BroadcastSuccessAndRateLimited) {
+    // 覆盖 udp_socket.cpp 行 110-118 广播频率限制（30s 一次）
+    auto s = UdpSocket::create(0);
+    ASSERT_TRUE(s.is_ok());
+    ASSERT_TRUE(s.value()->enable_broadcast().is_ok());
+    Endpoint bcast{"255.255.255.255", 9999, true};
+    std::vector<std::uint8_t> payload{0x01};
+    auto first = s.value()->send(payload, bcast);
+    EXPECT_TRUE(first.is_ok());
+    // 30s 内第二次应被限流
+    auto second = s.value()->send(payload, bcast);
+    EXPECT_EQ(second.error(), ErrorCode::NET_RATE_LIMITED);
+}
+
+TEST(UdafTransport, SendInvalidAddress) {
+    // 覆盖 udp_socket.cpp 行 153-155 inet_pton 失败 → INVALID_ARG
+    auto s = UdpSocket::create(0);
+    ASSERT_TRUE(s.is_ok());
+    std::vector<std::uint8_t> payload{1, 2, 3};
+    auto r = s.value()->send(payload, Endpoint{"not.an.ip.addr", 1234, false});
+    EXPECT_EQ(r.error(), ErrorCode::INVALID_ARG);
+}
+
+TEST(UdafTransport, SendAfterClose) {
+    // 覆盖 udp_socket.cpp 行 122-124 fd 关闭后 send → NET_SOCKET_CLOSED
+    auto s = UdpSocket::create(0);
+    ASSERT_TRUE(s.is_ok());
+    s.value()->close();
+    std::vector<std::uint8_t> payload{1};
+    auto r = s.value()->send(payload, Endpoint{"127.0.0.1", 1234, false});
+    EXPECT_EQ(r.error(), ErrorCode::NET_SOCKET_CLOSED);
 }
 
 // ===== 边缘用例：覆盖 registry 全部错误分支 =====

@@ -48,6 +48,40 @@ TEST(AbilityC_Executor, ExecutesAllowedCommand) {
     EXPECT_GT(r.value().elapsed_ns, 0u);
 }
 
+TEST(AbilityC_Executor, StderrCapture) {
+    // 覆盖 process_executor.cpp 行 84-86（stderr 读取路径）
+    // bash -c 'echo err >&2' 触发 stderr 输出
+    ProcessExecutor::Options opts;
+    opts.executable = "/bin/sh";
+    opts.args = {"-c", "echo error_message >&2; exit 0"};
+    opts.allowed_executables = {"/bin/sh"};
+    auto r = ProcessExecutor::execute(opts);
+    ASSERT_TRUE(r.is_ok());
+    EXPECT_EQ(r.value().exit_code, 0);
+    EXPECT_NE(r.value().stderr_text.find("error_message"), std::string::npos);
+}
+
+TEST(AbilityC_Executor, NotInAllowedList) {
+    // 覆盖 process_executor.cpp 行 33-37 白名单检查
+    ProcessExecutor::Options opts;
+    opts.executable = "/bin/echo";
+    opts.args = {"x"};
+    opts.allowed_executables = {"/bin/ls"};  // echo 不在白名单
+    auto r = ProcessExecutor::execute(opts);
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::BIZ_AUTH_UNTRUSTED);
+}
+
+TEST(AbilityC_Executor, EmptyExeRejected) {
+    // 覆盖 process_executor.cpp 行 35-37 空 executable → INVALID_ARG
+    ProcessExecutor::Options opts;
+    opts.executable = "";
+    opts.allowed_executables = {""};
+    auto r = ProcessExecutor::execute(opts);
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::INVALID_ARG);
+}
+
 TEST(AbilityC_Executor, ForkExecUnderContract) {
     ProcessExecutor::Options opts;
     opts.executable = "/bin/echo";
