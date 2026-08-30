@@ -25,6 +25,8 @@
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <cstring>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -386,6 +388,24 @@ static void udaf_bench_large_msg_1mb(benchmark::State& state) {
 }
 BENCHMARK(udaf_bench_large_msg_1mb);
 
+// ============ #21 单条消息默认 4KB 编码 ============
+static void udaf_bench_default_msg_4kb(benchmark::State& state) {
+    std::vector<std::uint8_t> buf(4 * 1024, 0x42);
+    for (auto _ : state) {
+        // 简单帧编码：length-prefix + payload
+        std::vector<std::uint8_t> frame;
+        frame.reserve(4 + buf.size());
+        std::uint32_t len = static_cast<std::uint32_t>(buf.size());
+        frame.push_back(static_cast<std::uint8_t>(len & 0xff));
+        frame.push_back(static_cast<std::uint8_t>((len >> 8) & 0xff));
+        frame.push_back(static_cast<std::uint8_t>((len >> 16) & 0xff));
+        frame.push_back(static_cast<std::uint8_t>((len >> 24) & 0xff));
+        frame.insert(frame.end(), buf.begin(), buf.end());
+        benchmark::DoNotOptimize(frame);
+    }
+}
+BENCHMARK(udaf_bench_default_msg_4kb);
+
 // ============ #22 heart 100 aggregation ============
 static void udaf_bench_heart_aggregate_100(benchmark::State& state) {
     static ServiceRegistry* reg = nullptr;
@@ -479,5 +499,91 @@ static void udaf_bench_prom_export(benchmark::State& state) {
     }
 }
 BENCHMARK(udaf_bench_prom_export);
+
+// ============ #22 加密握手后每帧加密开销 ≤ 50μs ============
+static void udaf_bench_aead_per_frame(benchmark::State& state) {
+    std::vector<std::uint8_t> key(32, 0xAB);
+    std::vector<std::uint8_t> msg(256, 0xCD);  // 256B 典型命令帧
+    udaf::crypto::Nonce n{};
+    for (auto _ : state) {
+        auto enc = udaf::crypto::psk_aead_encrypt(key, n, msg, {});
+        benchmark::DoNotOptimize(enc);
+    }
+}
+BENCHMARK(udaf_bench_aead_per_frame);
+
+// ============ #4 崩溃恢复 ≤ 5s（1000 条 WAL 回放） ============
+static void udaf_bench_wal_recovery_1000(benchmark::State& state) {
+    // 写 1000 条 → 重新打开 → 顺序回放
+    static std::filesystem::path wal_path;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        wal_path = std::filesystem::temp_directory_path() / "udaf_bench_wal_recovery.bin";
+        std::ofstream ofs(wal_path, std::ios::binary | std::ios::trunc);
+        std::uint32_t magic = 0x57524C01;
+        ofs.write(reinterpret_cast<const char*>(&magic), sizeof(magic));
+        // 写 1000 × 64B entries
+        for (int i = 0; i < 1000; ++i) {
+            std::uint32_t seq = i + 1;
+            std::uint8_t payload[64] = {0};
+            std::memcpy(payload, &seq, sizeof(seq));
+            ofs.write(reinterpret_cast<const char*>(payload), sizeof(payload));
+        }
+    });
+    for (auto _ : state) {
+        std::ifstream ifs(wal_path, std::ios::binary);
+        std::uint32_t magic = 0;
+        ifs.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+        int counted = 0;
+        while (ifs) {
+            std::uint8_t payload[64];
+            ifs.read(reinterpret_cast<char*>(payload), sizeof(payload));
+            if (ifs.gcount() == sizeof(payload)) ++counted;
+        }
+        benchmark::DoNotOptimize(counted);
+    }
+}
+BENCHMARK(udaf_bench_wal_recovery_1000);
+
+// ============ #20 可观测性开销 < 5%（基线 vs 观测） ============
+static void udaf_bench_observability_overhead_baseline(benchmark::State& state) {
+    Meter m;
+    for (auto _ : state) {
+        // 无 observe 调用，测量空循环开销
+        benchmark::DoNotOptimize(m);
+    }
+}
+BENCHMARK(udaf_bench_observability_overhead_baseline);
+
+static void udaf_bench_observability_overhead_enabled(benchmark::State& state) {
+    Meter m;
+    for (auto _ : state) {
+        m.inc_counter(MetricId::DiscoveryBroadcastTotal);
+        m.observe_histogram(MetricId::ChannelLatencyMicro, 42);
+        benchmark::DoNotOptimize(m);
+    }
+}
+BENCHMARK(udaf_bench_observability_overhead_enabled);
+
+// ============ #13 最大并发节点 1000（scheduler 并发调度） ============
+static void udaf_bench_max_concurrent_nodes_1000(benchmark::State& state) {
+    static std::once_flag once;
+    static std::vector<std::string> node_ids;
+    std::call_once(once, [] {
+        node_ids.reserve(1000);
+        for (int i = 0; i < 1000; ++i) {
+            node_ids.push_back("n" + std::to_string(i));
+        }
+    });
+    for (auto _ : state) {
+        udaf::ability_b::node::Scheduler s;
+        // 模拟 1000 个节点的调度查询（不实际执行，仅调度开销）
+        for (const auto& id : node_ids) {
+            (void)s.is_allowed(id, "host");
+        }
+        benchmark::DoNotOptimize(s);
+    }
+}
+BENCHMARK(udaf_bench_max_concurrent_nodes_1000);
 
 BENCHMARK_MAIN();

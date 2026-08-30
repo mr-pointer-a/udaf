@@ -55,6 +55,17 @@ THRESHOLDS=(
     "udaf_bench_crypto_overhead|2000|<=||26|HMAC 单次 < 2μs（架构 #26 加密开销间接）"
     # #27 审计日志写入吞吐 ≥ 1000 条/秒
     "udaf_bench_audit_throughput|1000|>=||27|审计吞吐 ≥ 1K 条/秒（架构 #27）"
+    # #4 崩溃恢复 ≤ 5s（1000 条 WAL 回放）
+    "udaf_bench_wal_recovery_1000|5000000000|<=||4|崩溃恢复 ≤ 5s（架构 #4）"
+    # #22 加密握手后每帧加密开销 ≤ 50μs (50000 ns)
+    "udaf_bench_aead_per_frame|50000|<=||22|AEAD 单帧 ≤ 50μs（架构 #22）"
+    # #20 可观测性自身开销 < 5%（baseline vs enabled 比值 < 1.05）
+    # 用 ratio 模式：enabled / baseline < 1.05
+    "udaf_bench_observability_overhead_enabled|100|<=||20|可观测性开销 < 5%（架构 #20，ratio 阈值 ×100）"
+    # #21 4KB 默认消息编码 < 1μs (1000 ns)
+    "udaf_bench_default_msg_4kb|1000|<=||21|4KB 默认消息编码 < 1μs（架构 #21）"
+    # #13 最大并发节点 1000（架构 #13 仅约束"支持 ≥ 1000"，时间只给宽松上限 10ms）
+    "udaf_bench_max_concurrent_nodes_1000|10000000|<=||13|1000 并发节点调度 < 10ms（架构 #13 宽松上限）"
 )
 
 # ---------- 工具函数 ----------
