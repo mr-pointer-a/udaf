@@ -66,6 +66,30 @@ THRESHOLDS=(
     "udaf_bench_default_msg_4kb|1000|<=||21|4KB 默认消息编码 < 1μs（架构 #21）"
     # #13 最大并发节点 1000（架构 #13 仅约束"支持 ≥ 1000"，时间只给宽松上限 10ms）
     "udaf_bench_max_concurrent_nodes_1000|10000000|<=||13|1000 并发节点调度 < 10ms（架构 #13 宽松上限）"
+    # 辅助契约：subscribe_fire latency（架构提及 < 5μs）
+    "udaf_bench_subscribe_fire|5000|<=||S1|subscribe fire 延迟 < 5μs（架构 §3.4 提及）"
+    # 辅助契约：subscribe_batch throughput（架构提及 ≥ 2M/s）
+    "udaf_bench_subscribe_batch|2000000|>=||S2|subscribe batch 吞吐 ≥ 2M/s（架构 §3.4 提及）"
+    # 辅助契约：WAL append throughput（架构提及 ≥ 10K/s）
+    "udaf_bench_wal_append|10000|>=||S3|WAL append 吞吐 ≥ 10K/s（架构 §3.4 提及）"
+    # 辅助契约：topology add_node latency
+    "udaf_bench_topology_add_node|10000|<=||S4|topology add_node < 10μs（架构 §3.4 提及）"
+    # 辅助契约：node reload latency（架构未明确，宽松 100ms）
+    "udaf_bench_node_reload|100000000|<=||S5|node reload < 100ms（宽松上限）"
+    # 辅助契约：channel send+recv 端到端往返（架构 #5/#25 类似）
+    "udaf_bench_channel_send_recv|100000|<=||S6|channel send+recv 往返 < 100μs"
+    # 辅助契约：channel 重连 latency
+    "udaf_bench_channel_reopen|100000000|<=||S7|channel 重连 < 100ms（宽松上限）"
+    # 辅助契约：Result<T> 构造（验证零开销）
+    "udaf_bench_result_ok|1000|<=||S8|Result<T> 构造 < 1μs（零开销验证）"
+    # 辅助契约：meter observe（可观测性内部开销）
+    "udaf_bench_meter_observe|10000|<=||S9|meter observe < 10μs（观测开销验证）"
+    # 辅助契约：prometheus 导出（每秒处理条数）
+    "udaf_bench_prom_export|1000|>=||S10|prom export ≥ 1K metrics/s"
+    # 辅助契约：heartbeat 优先级传递（架构 §5.6 强制投递）
+    "udaf_bench_channel_heartbeat_priority|10000|<=||S11|heartbeat 优先级投递 < 10μs"
+    # 辅助契约：port try_recv 延迟
+    "udaf_bench_port_try_recv|1000|<=||S12|port try_recv < 1μs"
 )
 
 # ---------- 工具函数 ----------
