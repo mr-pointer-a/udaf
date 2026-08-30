@@ -43,6 +43,10 @@ public:
     /// 注入命令白名单
     void set_allowed_executables(std::vector<std::string> allow) noexcept;
 
+    /// 端口访问器（供测试触发 worker 路径）
+    ability_b::port::InputPort<messages::CmdRequest>& in_cmd() noexcept { return in_cmd_; }
+    ability_b::port::OutputPort<messages::CmdResult>& out_result() noexcept { return out_result_; }
+
 private:
     void worker() noexcept;
 
