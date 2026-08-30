@@ -1,5 +1,56 @@
 # 变更日志
 
+## v0.3.2 (2026-08-31) - CLI 14 子命令端到端测试 (P19)
+
+### 新增
+
+- **`src/cli/main.hpp`**：CLI 公共接口
+  - `ExitCode` 枚举（13 项：kOk ~ kConfig）
+  - `Command` 结构体（name + handler + brief）
+  - `command_table()` 返回 14 子命令注册表
+
+- **`src/cli/cli.cpp`**：14 个 handler + command_table + Client 单例
+  - 从 main.cpp 拆出，独立编译为 `udaf_cli` 静态库
+  - 测试可直接链接调用 handler（无需 fork+exec）
+
+- **`tests/cli/test_cli.cpp` 全面扩展**：1 占位测试 → 19 测试
+  - **version**：输出含版本号 + schema_version
+  - **help**：列出全部 14 子命令 + 全局选项
+  - **completion**：bash / zsh / fish / 未知 shell
+  - **command_table**：14 项完整 + handler/name/brief 校验
+  - **run/push/pull**：参数校验路径（kUsage 路径无需 Client）
+  - **unknown subcommand**：返回 kUnknownCmd
+  - **exit codes**：13 项常量验证 + 范围检查
+
+### 拆分
+
+- **`src/cli/main.cpp`**：仅保留 `main()` 入口（28 行 vs 原 372 行）
+- **`src/cli/CMakeLists.txt`**：
+  - 新增 `udaf_cli` 静态库（cli.cpp）
+  - `udaf` 可执行文件链接 `udaf_cli`
+
+### 验证
+
+- **334/334 测试通过**（316 → 334 = +17 net 含 CLI 19 - 占位 1）
+- **udaf 可执行文件**：version/--help/无参数/未知命令 4 项退出码正确（0/0/1/2）
+
+### 指标
+
+| 维度 | v0.3.1 | v0.3.2 |
+|---|---|---|
+| 测试数 | 316 | 334 (+17) |
+| CLI 测试 | 1 placeholder | 19 实质测试 |
+| 行覆盖率 | 91.1% | 86.9% (-4.2%) |
+| 函数覆盖率 | 93.2% | 92.1% (-1.1%) |
+
+**覆盖率下降原因**：`cli.cpp` 新增 ~340 行 handler 代码，其中 ~270 行依赖 `current_client()` 实际启动 Client（ZMQ socket + audit logger）。单测环境未提供完整 Client 配置，因此 handler 中调用 Client 的路径未覆盖。后续 P20 可通过注入 mock Client 或扩展测试基础设施恢复。
+
+### commit
+
+- 待提交
+
+---
+
 ## v0.3.1 (2026-08-31) - 覆盖率 91.1% + ASan/UBSan 全量回归通过
 
 ### 新增
