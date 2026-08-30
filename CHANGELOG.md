@@ -1,5 +1,46 @@
 # 变更日志
 
+## v0.3.10 (2026-08-31) - UDP 覆盖率补充
+
+### 新增
+
+- **tests/ability_a/test_ability_a.cpp**：4 项 UDP 测试
+  - CreateExplicitPortSuccess：显式端口绑定
+  - CreatePortZeroGetsEphemeral：端口 0 → 系统分配
+  - RecvAfterCloseReturnsError：close 后 recv 返回 NET_SOCKET_CLOSED
+  - EndpointStructBasics：Endpoint 字段验证
+
+### 指标
+
+- 测试数：373 → 377 (+4)
+- 行覆盖率：90.9% (基本持平)
+
+---
+
+## v0.3.9 (2026-08-31) - Topology 覆盖率补充
+
+### 新增
+
+- 4 项 Topology 测试覆盖 begin_transaction / has_cycle 空 / node_count / commit 后 move
+
+---
+
+## v0.3.8 (2026-08-31) - ServiceRegistry 覆盖率补充
+
+### 新增
+
+- 5 项 ServiceRegistry 测试覆盖 get 缺失 / unregister 缺失 / clear / snapshot 多项 / unsubscribe 未知 handle
+
+---
+
+## v0.3.7 (2026-08-31) - audit.cpp 覆盖率补充
+
+### 新增
+
+- 5 项 audit 测试覆盖 params_hash 决定性 / 差异性 / verify_chain 失败 / append 失败 / sequence 反映
+
+---
+
 ## v0.3.6 (2026-08-31) - 内存契约测量 + 总契约 33/33 PASS (P21)
 
 ### 新增
