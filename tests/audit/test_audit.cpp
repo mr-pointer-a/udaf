@@ -2,9 +2,14 @@
 #include <gtest/gtest.h>
 
 #include "audit/audit.hpp"
+#include "core/error_code.hpp"
 
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <chrono>
+#include <algorithm>
 
 namespace fs = std::filesystem;
 
@@ -110,6 +115,77 @@ TEST_F(AuditTmp, WriteThroughput) {
     EXPECT_GT(rate, 1000) << "rate=" << rate << " ops/s";
 }
 
-#include <unistd.h>
-#include <chrono>
-#include <algorithm>
+// ===== 覆盖率补充 =====
+
+// 验证 compute_params_hash：相同输入产生相同 hash（通过 append 间接验证）
+TEST_F(AuditTmp, ParamsHashDeterministic) {
+    AuditLogger log(path_.string());
+    // 两次 append 相同 params → 第一次的 params_hash 应在文件中出现一次
+    ASSERT_TRUE(log.append(ActionType::NodeRegister, "a", "t", "{\"x\":1}").is_ok());
+    ASSERT_TRUE(log.append(ActionType::NodeRegister, "a", "t", "{\"x\":1}").is_ok());
+    std::ifstream in(path_);
+    std::string line;
+    int dup_count = 0;
+    std::string first_hash;
+    while (std::getline(in, line)) {
+        // 格式: seq|action|actor|target|ts|prev|params_h|json
+        // params_h 是第 7 个 |
+        std::stringstream ss(line);
+        std::string field;
+        for (int i = 0; i < 7 && std::getline(ss, field, '|'); ++i) {}
+        if (field.size() == 128u) {
+            if (first_hash.empty()) first_hash = field;
+            else if (field == first_hash) ++dup_count;
+        }
+    }
+    EXPECT_EQ(dup_count, 1) << "两次相同 params 应有相同 hash";
+}
+
+// 验证 compute_params_hash：不同输入产生不同 hash（间接通过 append）
+TEST_F(AuditTmp, ParamsHashDistinct) {
+    AuditLogger log(path_.string());
+    ASSERT_TRUE(log.append(ActionType::NodeRegister, "a", "t", "{\"x\":1}").is_ok());
+    ASSERT_TRUE(log.append(ActionType::NodeRegister, "a", "t", "{\"x\":2}").is_ok());
+    std::ifstream in(path_);
+    std::string line;
+    std::string h1, h2;
+    int count = 0;
+    while (std::getline(in, line)) {
+        std::stringstream ss(line);
+        std::string field;
+        for (int i = 0; i < 7 && std::getline(ss, field, '|'); ++i) {}
+        if (field.size() == 128u) {
+            if (count == 0) h1 = field;
+            else if (count == 1) h2 = field;
+            ++count;
+        }
+    }
+    EXPECT_NE(h1, h2);
+    EXPECT_EQ(count, 2);
+}
+
+// verify_chain 失败路径：构造 logger 后不 append 直接删除文件，再 verify
+TEST_F(AuditTmp, VerifyChainMissingFileReturnsError) {
+    AuditLogger log(path_.string());
+    fs::remove(path_);
+    auto v = log.verify_chain();
+    EXPECT_TRUE(v.is_err());
+}
+
+// append 失败路径：path 不可写（目录不存在）
+TEST_F(AuditTmp, AppendBadPathReturnsError) {
+    AuditLogger log("/nonexistent/dir/audit.log");
+    auto r = log.append(ActionType::NodeRegister, "a", "t", "{}");
+    EXPECT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::INTERNAL);
+}
+
+// sequence() 反映多次 append
+TEST_F(AuditTmp, SequenceReflectsAppends) {
+    AuditLogger log(path_.string());
+    EXPECT_EQ(log.sequence(), 0u);
+    (void)log.append(ActionType::NodeRegister, "a", "t", "{}");
+    EXPECT_EQ(log.sequence(), 1u);
+    (void)log.append(ActionType::NodeUnregister, "a", "t", "{}");
+    EXPECT_EQ(log.sequence(), 2u);
+}
