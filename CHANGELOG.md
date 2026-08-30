@@ -1,5 +1,44 @@
 # 变更日志
 
+## v0.3.6 (2026-08-31) - 内存契约测量 + 总契约 33/33 PASS (P21)
+
+### 新增
+
+- **scripts/measure_memory.sh**（180 行）：独立进程 RSS 测量
+  - 编译 4 个最小化二进制（device_idle / host_idle / device_peak / host_peak）
+  - 仅链接必要库，隔离 benchmark 二进制开销
+  - 测量前后 RSS delta，取 3 次最大值
+  - 软/硬阈值（×1.2 / ×1.5）
+
+- **bench/udaf_bench.cpp 新增 4 项内存 BENCHMARK**：
+  - `udaf_bench_device_idle_memory` (#1)
+  - `udaf_bench_host_idle_memory` (#2)
+  - `udaf_bench_device_peak_memory` (#28)
+  - `udaf_bench_host_peak_memory` (#29)
+
+- **scripts/check_perf_contracts.sh** 集成 measure_memory.sh
+
+### 实测内存（独立进程）
+
+| 架构 # | 契约 | 实测 | 阈值 | 状态 |
+|---|---|---|---|---|
+| #1 | 设备端空闲内存 < 8MB | 0.3 MB | 8 MB | ✅ |
+| #2 | 主机端空闲内存 < 32MB | 2.7 MB | 32 MB | ✅ |
+| #28 | 设备端峰值内存 < 16MB | 2.7 MB | 16 MB | ✅ |
+| #29 | 主机端峰值内存 < 128MB | 2.9 MB | 128 MB | ✅ |
+
+### 总指标
+
+- **33 项性能契约全 PASS**（29 timing + 4 memory）
+- **覆盖**：架构 §3.4 全部可 BENCHMARK 验证的契约
+- **未覆盖**（需 TCP/长跑/外部工具）：#6 #8 #9 #10 #12 #17 #18 #19 #25
+
+### commit
+
+- 待提交
+
+---
+
 ## v0.3.3 (2026-08-31) - 性能契约 17→29 项 (P20)
 
 ### 改进

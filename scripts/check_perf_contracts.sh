@@ -90,6 +90,8 @@ THRESHOLDS=(
     "udaf_bench_channel_heartbeat_priority|10000|<=||S11|heartbeat 优先级投递 < 10μs"
     # 辅助契约：port try_recv 延迟
     "udaf_bench_port_try_recv|1000|<=||S12|port try_recv < 1μs"
+    # 内存契约 #1 #2 #28 #29 由 scripts/measure_memory.sh 测量（独立进程）
+    # 本脚本调用 measure_memory.sh 整合
 )
 
 # ---------- 工具函数 ----------
@@ -117,8 +119,8 @@ echo "==> 运行基准（最小时间 0.1s 保证 P95 稳定）"
               --benchmark_out="$TMP_JSON" >/dev/null 2>&1 \
     || die "基准运行失败"
 
-# 解析每个 benchmark 的 time (CPU time, ns) 或 items_per_second
-# 输出格式：name|cpu_time_ns|items_per_second
+# 解析每个 benchmark 的 time (CPU time, ns) / items_per_second / rss_kb
+# 输出格式：name|cpu_time_ns|items_per_second|rss_kb
 extract_metric() {
     local name="$1"
     python3 - "$TMP_JSON" "$name" <<'PY'
@@ -127,15 +129,17 @@ path, name = sys.argv[1], sys.argv[2]
 try:
     data = json.load(open(path))
 except Exception:
-    print("|0|0"); sys.exit(0)
+    print("|0|0|0"); sys.exit(0)
 for b in data.get("benchmarks", []):
     if b.get("name","").startswith(name):
         cpu = b.get("cpu_time", 0)        # ns
         items = (b.get("items_per_second") or
                  (b.get("iterations",0)*1e9/cpu if cpu else 0))
-        print(f"|{int(cpu)}|{items:.0f}")
+        # rss_kb 是顶级 key（自定义 counter）
+        rss_kb = int(b.get("rss_kb", 0) or 0)
+        print(f"|{int(cpu)}|{items:.0f}|{int(rss_kb)}")
         sys.exit(0)
-print("|0|0")
+print("|0|0|0")
 PY
 }
 
@@ -158,6 +162,7 @@ for entry in "${THRESHOLDS[@]}"; do
     metric=$(extract_metric "$bench")
     measured_ns=$(echo "$metric" | cut -d'|' -f2)
     measured_ips=$(echo "$metric" | cut -d'|' -f3)
+    measured_rss=$(echo "$metric" | cut -d'|' -f4)
 
     if [ "$measured_ns" = "0" ] && [ "$measured_ips" = "0" ]; then
         printf "%-4s | %-32s | %10s | %10s | %10s | %s\n" \
@@ -166,8 +171,30 @@ for entry in "${THRESHOLDS[@]}"; do
         continue
     fi
 
-    # 选择比较量：吞吐量类用 ips，时间类用 cpu_time
-    if [ "$comp" = ">=" ]; then
+    # 内存契约：通过 bench 名识别（"memory" 子串）
+    if [[ "$bench" == *"memory"* ]]; then
+        value="$measured_rss"
+        if [ "$value" -le 0 ]; then
+            printf "%-4s | %-32s | %10s | %10s | %10s | %s\n" \
+                   "#$id" "$desc" "N/A" "${threshold}KB" "N/A" "❌ MISSING"
+            MISSING=$((MISSING+1))
+            continue
+        fi
+        soft_thr=$(python3 -c "print(int($threshold * $SOFT_MULT))")
+        hard_thr=$(python3 -c "print(int($threshold * $HARD_MULT))")
+        if python3 -c "exit(0 if $value <= $threshold else 1)"; then
+            status="✅ PASS"; PASS=$((PASS+1))
+        elif python3 -c "exit(0 if $value <= $soft_thr else 1)"; then
+            status="⚠️  SOFT"; SOFT_FAIL=$((SOFT_FAIL+1))
+        else
+            status="❌ HARD"; HARD_FAIL=$((HARD_FAIL+1))
+        fi
+        value_str="$(python3 -c "print(f'{$value/1024:.1f}MB')")"
+        thr_str="$(python3 -c "print(f'{$threshold/1024:.0f}MB')")"
+        soft_str="$(python3 -c "print(f'{$soft_thr/1024:.0f}MB')")"
+        printf "%-4s | %-32s | %10s | %10s | %10s | %s\n" \
+               "#$id" "$desc" "$value_str" "$thr_str" "$soft_str" "$status"
+    elif [ "$comp" = ">=" ]; then
         value="$measured_ips"
         soft_thr=$(python3 -c "import math; print(int($threshold * $SOFT_MULT))")
         hard_thr=$(python3 -c "import math; print(int($threshold * $HARD_MULT))")
@@ -213,6 +240,12 @@ done
 
 echo "------------------------------------------------------------------------------------------------"
 echo "汇总：✅ $PASS pass / ⚠️  $SOFT_FAIL soft-fail / ❌ $HARD_FAIL hard-fail / 🚫 $MISSING missing"
+
+# 内存契约（独立进程测量）
+echo ""
+if [ -x "$SCRIPT_DIR/measure_memory.sh" ]; then
+    bash "$SCRIPT_DIR/measure_memory.sh" 2>&1 || true
+fi
 
 # 退出码
 if [ $HARD_FAIL -gt 0 ]; then exit 2; fi

@@ -10,6 +10,7 @@ target_link_libraries(udaf_bench
         udaf::udaf_audit
         udaf::udaf_crypto
         udaf::udaf_observability
+        udaf::udaf_sdk
         udaf::udaf_ability_a_registry
         udaf::udaf_ability_b_transport
         udaf::udaf_ability_b_topology

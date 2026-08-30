@@ -586,4 +586,136 @@ static void udaf_bench_max_concurrent_nodes_1000(benchmark::State& state) {
 }
 BENCHMARK(udaf_bench_max_concurrent_nodes_1000);
 
+// ---------------- 内存契约 BENCHMARKs（架构 #1 #2 #28 #29）----------------
+//
+// 通过 /proc/self/status 读取 RSS（驻留集大小），
+// 多次实例化核心组件后报告增量峰值。
+// Google Benchmark 输出 rss_kb counter，scripts/check_perf_contracts.sh 解析为 KB/MB。
+
+#include "sdk/sdk/sdk.hpp"
+
+#include <fstream>
+#include <string>
+
+namespace {
+
+// 读取当前进程 RSS（KB）
+std::size_t read_rss_kb() {
+    std::ifstream f("/proc/self/status");
+    std::string line;
+    while (std::getline(f, line)) {
+        if (line.rfind("VmRSS:", 0) == 0) {
+            // VmRSS:	   12345 kB
+            std::size_t kb = 0;
+            std::sscanf(line.c_str(), "VmRSS: %zu", &kb);
+            return kb;
+        }
+    }
+    return 0;
+}
+
+}  // namespace
+
+// #28 设备端峰值内存 < 16MB
+// 测量 delta：构造前后 RSS 之差，反映 UDAF 增量（排除 libc/benchmark 二进制）
+void udaf_bench_device_peak_memory(benchmark::State& state) {
+    for (auto _ : state) {
+        std::size_t rss_before = read_rss_kb();
+        std::size_t rss_after = 0;
+        {
+            udaf::sdk::ClientConfig cfg;
+            cfg.node_id    = "bench-device";
+            cfg.audit_path = "/tmp/udaf_bench_device.log";
+            udaf::sdk::Client c(cfg);
+            (void)c.start();
+            udaf::ability_a::registry::ServiceRegistry reg;
+            for (int i = 0; i < 50; ++i) {
+                udaf::ability_a::registry::RegistryEntry e;
+                e.node_id_      = "n" + std::to_string(i);
+                e.hostname_     = "host" + std::to_string(i);
+                e.bind_address_ = "127.0.0.1";
+                e.bind_port_    = static_cast<std::uint16_t>(8000 + i);
+                (void)reg.register_node(e);
+            }
+            benchmark::DoNotOptimize(c);
+            rss_after = read_rss_kb();
+            (void)c.stop();
+        }
+        std::size_t delta = (rss_after > rss_before) ? (rss_after - rss_before) : rss_after;
+        state.counters["rss_kb"] = static_cast<double>(delta);
+    }
+}
+BENCHMARK(udaf_bench_device_peak_memory);
+
+// #29 主机端峰值内存 < 128MB
+void udaf_bench_host_peak_memory(benchmark::State& state) {
+    for (auto _ : state) {
+        std::size_t rss_before = read_rss_kb();
+        std::size_t rss_after = 0;
+        {
+            udaf::sdk::ClientConfig cfg;
+            cfg.node_id    = "bench-host";
+            cfg.audit_path = "/tmp/udaf_bench_host.log";
+            udaf::sdk::Client c(cfg);
+            (void)c.start();
+            udaf::ability_a::registry::ServiceRegistry reg;
+            for (int i = 0; i < 1000; ++i) {
+                udaf::ability_a::registry::RegistryEntry e;
+                e.node_id_      = "node" + std::to_string(i);
+                e.hostname_     = "host" + std::to_string(i);
+                e.bind_address_ = "10.0.0." + std::to_string(i % 256);
+                e.bind_port_    = static_cast<std::uint16_t>(8000 + (i % 1000));
+                (void)reg.register_node(e);
+            }
+            benchmark::DoNotOptimize(c);
+            rss_after = read_rss_kb();
+            (void)c.stop();
+        }
+        std::size_t delta = (rss_after > rss_before) ? (rss_after - rss_before) : rss_after;
+        state.counters["rss_kb"] = static_cast<double>(delta);
+    }
+}
+BENCHMARK(udaf_bench_host_peak_memory);
+
+// #1 设备端空闲内存 < 8MB
+// 最小工作集（无 registry），测量 Client 单实例 delta
+void udaf_bench_device_idle_memory(benchmark::State& state) {
+    for (auto _ : state) {
+        std::size_t rss_before = read_rss_kb();
+        std::size_t rss_after = 0;
+        {
+            udaf::sdk::ClientConfig cfg;
+            cfg.node_id    = "bench-device-idle";
+            cfg.audit_path = "";  // 不开 audit
+            udaf::sdk::Client c(cfg);
+            benchmark::DoNotOptimize(c);
+            rss_after = read_rss_kb();
+        }
+        std::size_t delta = (rss_after > rss_before) ? (rss_after - rss_before) : rss_after;
+        state.counters["rss_kb"] = static_cast<double>(delta);
+    }
+}
+BENCHMARK(udaf_bench_device_idle_memory);
+
+// #2 主机端空闲内存 < 32MB
+// Client + 空 Registry
+void udaf_bench_host_idle_memory(benchmark::State& state) {
+    for (auto _ : state) {
+        std::size_t rss_before = read_rss_kb();
+        std::size_t rss_after = 0;
+        {
+            udaf::sdk::ClientConfig cfg;
+            cfg.node_id    = "bench-host-idle";
+            cfg.audit_path = "/tmp/udaf_bench_host_idle.log";
+            udaf::sdk::Client c(cfg);
+            udaf::ability_a::registry::ServiceRegistry reg;
+            benchmark::DoNotOptimize(c);
+            rss_after = read_rss_kb();
+        }
+        std::size_t delta = (rss_after > rss_before) ? (rss_after - rss_before) : rss_after;
+        state.counters["rss_kb"] = static_cast<double>(delta);
+    }
+}
+BENCHMARK(udaf_bench_host_idle_memory);
+
 BENCHMARK_MAIN();
