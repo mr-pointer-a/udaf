@@ -653,3 +653,54 @@ TEST(UdafTrust, ClearAll) {
     EXPECT_EQ(w.size(), 0u);
     EXPECT_FALSE(w.contains("d1"));
 }
+
+// ===== ServiceRegistry 覆盖率补充 =====
+
+TEST(UdafRegistry, GetMissingNodeReturnsError) {
+    ServiceRegistry reg;
+    auto r = reg.get_node("ghost-node");
+    EXPECT_TRUE(r.is_err());
+}
+
+TEST(UdafRegistry, UnregisterMissingReturnsFalse) {
+    ServiceRegistry reg;
+    auto r = reg.unregister_node("ghost-node");
+    EXPECT_TRUE(r.is_ok());
+    EXPECT_FALSE(r.value());  // 不存在 → false
+}
+
+TEST(UdafRegistry, ClearEmptiesRegistry) {
+    ServiceRegistry reg;
+    RegistryEntry e;
+    e.node_id_ = "n1";
+    e.bind_address_ = "127.0.0.1";
+    e.bind_port_ = 8000;
+    (void)reg.register_node(e);
+    EXPECT_GT(reg.size(), 0u);
+    reg.clear();
+    EXPECT_EQ(reg.size(), 0u);
+}
+
+TEST(UdafRegistry, SnapshotMultipleEntries) {
+    ServiceRegistry reg;
+    for (int i = 0; i < 5; ++i) {
+        RegistryEntry e;
+        e.node_id_      = "node-" + std::to_string(i);
+        e.hostname_     = "host-" + std::to_string(i);
+        e.bind_address_ = "127.0.0.1";
+        e.bind_port_    = static_cast<std::uint16_t>(8000 + i);
+        (void)reg.register_node(e);
+    }
+    auto snap = reg.snapshot();
+    EXPECT_EQ(snap.size(), 5u);
+    for (const auto& e : snap) {
+        EXPECT_FALSE(e.node_id_.empty());
+        EXPECT_GT(e.bind_port_, 0u);
+    }
+}
+
+TEST(UdafRegistry, UnsubscribeInvalidHandleNoCrash) {
+    ServiceRegistry reg;
+    reg.unsubscribe(99999);  // 不存在的 handle → 应安全忽略
+    SUCCEED();
+}
