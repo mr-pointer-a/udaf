@@ -434,6 +434,34 @@ TEST(UdafTransport, SendAfterClose) {
     EXPECT_EQ(r.error(), ErrorCode::NET_SOCKET_CLOSED);
 }
 
+// ===== UDP 覆盖率补充 =====
+
+TEST(UdafTransport, CreateExplicitPortSuccess) {
+    auto s = UdpSocket::create(19999);  // 显式端口
+    EXPECT_TRUE(s.is_ok());
+}
+
+TEST(UdafTransport, CreatePortZeroGetsEphemeral) {
+    auto s = UdpSocket::create(0);  // 系统分配端口
+    EXPECT_TRUE(s.is_ok());
+}
+
+TEST(UdafTransport, RecvAfterCloseReturnsError) {
+    auto s = UdpSocket::create(0);
+    ASSERT_TRUE(s.is_ok());
+    s.value()->close();
+    auto r = s.value()->recv(100);
+    EXPECT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), ErrorCode::NET_SOCKET_CLOSED);
+}
+
+TEST(UdafTransport, EndpointStructBasics) {
+    Endpoint ep{"127.0.0.1", 8080, true};
+    EXPECT_EQ(ep.address, "127.0.0.1");
+    EXPECT_EQ(ep.port, 8080);
+    EXPECT_TRUE(ep.is_broadcast);
+}
+
 // ===== 边缘用例：覆盖 registry 全部错误分支 =====
 
 TEST(UdafRegistry, RegisterEmptyNodeIdReturnsErr) {
