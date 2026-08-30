@@ -112,6 +112,32 @@ jobs:
           path: build-release/bench_results.json
           if-no-files-found: ignore
 
+  # ---------- Job 5b: performance contracts ----------
+  perf-contracts:
+    needs: [build-release]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-release-${{ github.sha }}
+      - name: Run perf contracts (29 timing + 4 memory)
+        run: |
+          bash scripts/check_perf_contracts.sh 2>&1 | tee perf_contracts.log
+          # 退出码 0/1/2：0=全PASS, 1=SOFT, 2=HARD
+          if [ ${PIPESTATUS[0]} -gt 1 ]; then
+            echo "::error::Hard perf contract failure"
+            exit 1
+          fi
+      - name: Upload perf contracts log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-contracts-${{ github.sha }}
+          path: perf_contracts.log
+          if-no-files-found: ignore
+
   # ---------- Job 6: coverage ----------
   coverage:
     needs: [build-debug]
@@ -137,6 +163,14 @@ jobs:
         with:
           name: coverage-${{ github.sha }}
           path: build-debug/coverage_html/
+      - name: Check coverage threshold (90%)
+        run: |
+          LINES=$(lcov --summary build-debug/coverage.info 2>&1 | grep "lines" | awk '{print $2}' | tr -d '%')
+          echo "Lines coverage: ${LINES}%"
+          if (( $(echo "$LINES < 90" | bc -l) )); then
+            echo "::error::Coverage dropped below 90% threshold"
+            exit 1
+          fi
 
   # ---------- Job 7: fuzz（仅 schedule/manual）----------
   fuzz:
