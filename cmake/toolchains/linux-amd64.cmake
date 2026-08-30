@@ -1,0 +1,1 @@
+# cmake/toolchains/linux-amd64.cmake - amd64 toolchain（含静态链接选项）

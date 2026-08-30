@@ -1,0 +1,44 @@
+# 构建产物
+build/
+build-*/
+build-*/**
+/build/
+/build-*/
+/build-**/
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+*~
+
+# 覆盖率
+*.gcda
+*.gcno
+*.gcov
+coverage/
+*.info
+
+# 临时 / 日志
+*.log
+*.tmp
+core.*
+*.pid
+
+# 缓存
+.cache/
+.ccache/
+
+# 第三方依赖（apt 安装不需要跟踪）
+_deps/
+
+# 历史材料（仅读参考）
+ref/
+
+# 子项目历史构建
+bench/results/
+
+# OS
+Thumbs.db

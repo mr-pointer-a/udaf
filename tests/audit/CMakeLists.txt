@@ -1,0 +1,5 @@
+add_executable(test_audit test_audit.cpp)
+target_link_libraries(test_audit PRIVATE udaf::udaf_audit GTest::gtest_main)
+target_compile_features(test_audit PRIVATE cxx_std_20)
+include(GoogleTest)
+gtest_discover_tests(test_audit PROPERTIES LABELS "unit" TIMEOUT 60)

@@ -1,0 +1,1 @@
+# cmake/toolchains/linux-amd64-static.cmake - amd64 静态链接（设备端）

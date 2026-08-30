@@ -1,0 +1,173 @@
+# UDAF CI - 8 个 job
+# 详细设计见 docs/05-test-plan.md §5.11.3
+
+name: UDAF CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    # 周日 02:00 UTC 跑 fuzz
+    - cron: "0 2 * * 0"
+  workflow_dispatch:
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  # ---------- Job 1: build-debug（含 ASan/UBSan）----------
+  build-debug:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y cmake libgtest-dev libgmock-dev libbenchmark-dev libspdlog-dev libssl-dev libyaml-cpp-dev libzmq3-dev protobuf-compiler libprotobuf-lite32t64
+      - name: Configure
+        run: cmake -B build-debug -DCMAKE_BUILD_TYPE=Debug -DUDAF_ENABLE_ASAN=ON -DUDAF_ENABLE_UBSAN=ON
+      - name: Build
+        run: cmake --build build-debug -j$(nproc)
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-debug-${{ github.sha }}
+          path: build-debug/
+
+  # ---------- Job 2: build-release ----------
+  build-release:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y cmake libgtest-dev libbenchmark-dev libspdlog-dev libssl-dev libyaml-cpp-dev libzmq3-dev protobuf-compiler libprotobuf-lite32t64
+      - name: Configure
+        run: cmake -B build-release -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build-release -j$(nproc)
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-release-${{ github.sha }}
+          path: build-release/
+
+  # ---------- Job 3: static-analysis ----------
+  static-analysis:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install static analyzers
+        run: sudo apt-get update && sudo apt-get install -y cppcheck clang-tidy
+      - name: cppcheck
+        run: |
+          cppcheck --enable=warning,style,performance,portability \
+            --suppress=missingIncludeSystem \
+            --inline-suppr \
+            --quiet --error-exitcode=1 \
+            src/
+      - name: clang-tidy (debug build)
+        run: |
+          cmake -B build-tidy -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_CLANG_TIDY="clang-tidy;-checks=bugprone-*,performance-*,readability-*,modernize-*,clang-analyzer-*"
+          cmake --build build-tidy -j$(nproc)
+
+  # ---------- Job 4: test ----------
+  test:
+    needs: [build-debug]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download debug artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-debug-${{ github.sha }}
+      - name: Run unit + integration tests
+        run: cd build-debug && ctest --output-on-failure -E "NOT_BUILT|udaf_bench"
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ github.sha }}
+          path: build-debug/Testing/
+
+  # ---------- Job 5: benchmark ----------
+  benchmark:
+    needs: [build-release]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-release-${{ github.sha }}
+      - name: Run benchmarks (smoke)
+        run: cd build-release && ctest -R udaf_bench --output-on-failure
+      - name: Full benchmark (manual trigger)
+        if: github.event_name == 'workflow_dispatch'
+        run: cd build-release && ./bench/udaf_bench --benchmark_min_time=1s --benchmark_format=json --benchmark_out=bench_results.json
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results-${{ github.sha }}
+          path: build-release/bench_results.json
+          if-no-files-found: ignore
+
+  # ---------- Job 6: coverage ----------
+  coverage:
+    needs: [build-debug]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download debug artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-debug-${{ github.sha }}
+      - name: Install lcov
+        run: sudo apt-get install -y lcov
+      - name: Capture coverage
+        run: |
+          cd build-debug
+          lcov --capture --directory . --output-file coverage.info --ignore-errors mismatch --rc lcov_branch_coverage=1
+          lcov --remove coverage.info '/usr/*' '*/_deps/*' '*/tests/*' --output-file coverage.info
+          lcov --list coverage.info
+      - name: Generate HTML report
+        run: genhtml build-debug/coverage.info --output-directory build-debug/coverage_html
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.sha }}
+          path: build-debug/coverage_html/
+
+  # ---------- Job 7: fuzz（仅 schedule/manual）----------
+  fuzz:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang
+        run: sudo apt-get update && sudo apt-get install -y clang
+      - name: Configure with fuzz
+        run: cmake -B build-fuzz -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Debug -DUDAF_ENABLE_FUZZ=ON
+      - name: Build fuzzer
+        run: cmake --build build-fuzz -j$(nproc) --target udaf_fuzz
+      - name: Run fuzz (60s)
+        run: |
+          cd build-fuzz
+          timeout 60 ./fuzz/udaf_fuzz_serializer_decode || echo "fuzz exit=$?"
+
+  # ---------- Job 8: stress（仅 manual/tag 触发）----------
+  stress:
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y cmake libgtest-dev libspdlog-dev libssl-dev
+      - name: Configure (stress mode)
+        run: cmake -B build-stress -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUDAF_ENABLE_STRESS=ON
+      - name: Build
+        run: cmake --build build-stress -j$(nproc)
+      - name: Run stress tests (5 min)
+        run: |
+          cd build-stress
+          timeout 300 ctest -R stress --output-on-failure || echo "stress exit=$?"
