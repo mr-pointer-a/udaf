@@ -372,3 +372,38 @@ TEST_F(CSdkTmp, DiscoverNullArgsWithPopulated) {
     EXPECT_EQ(udaf_client_discover(nullptr, "", nullptr, nullptr), UDAF_ERR_INVALID_ARG);
     udaf_client_destroy(cli);
 }
+
+// ===== ABI 稳定性测试（v1 接口锁定）=====
+//
+// 这些测试验证 ABI 在编译期稳定：
+// - 函数签名通过函数指针赋值验证
+// - 结构体大小通过 static_assert 锁定
+// - ABI 版本号未变
+
+TEST_F(CSdkTmp, AbiFunctionSignaturesStable) {
+    // 函数指针签名必须匹配头文件声明
+    udaf_error_t (*fp_create)(const udaf_client_config_t*, void**) = udaf_client_create;
+    udaf_error_t (*fp_start)(void*) = udaf_client_start;
+    udaf_error_t (*fp_stop)(void*) = udaf_client_stop;
+    void (*fp_destroy)(void*) = udaf_client_destroy;
+    udaf_error_t (*fp_discover)(void*, const char*, udaf_node_entry_t**, uint32_t*) =
+        udaf_client_discover;
+    EXPECT_NE(fp_create, nullptr);
+    EXPECT_NE(fp_start, nullptr);
+    EXPECT_NE(fp_stop, nullptr);
+    EXPECT_NE(fp_destroy, nullptr);
+    EXPECT_NE(fp_discover, nullptr);
+}
+
+TEST_F(CSdkTmp, AbiStructSizesLocked) {
+    // 关键结构体大小必须在 ABI v1 锁定
+    EXPECT_EQ(sizeof(udaf_client_config_t), 32u);  // node_id + audit_path + flags
+    EXPECT_EQ(sizeof(udaf_node_entry_t), 40u);    // node_id + hostname + addr + port
+    EXPECT_EQ(sizeof(udaf_trust_entry_t), 32u);   // node_id + fingerprint
+    EXPECT_EQ(sizeof(udaf_error_t), 4u);
+}
+
+TEST_F(CSdkTmp, AbiVersionReturnsV1) {
+    EXPECT_EQ(udaf_abi_version(), 1u);
+    EXPECT_GT(std::strlen(udaf_version_string()), 0u);
+}
