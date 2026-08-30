@@ -538,3 +538,34 @@ TEST(UdafTopology, HasCycleDeepDFS) {
     EXPECT_TRUE(t.commit(std::move(tx).value()).is_ok());
     EXPECT_TRUE(t.has_cycle());
 }
+
+// ===== Topology 覆盖率补充 =====
+
+TEST(UdafTopology, BeginTransactionSuccess) {
+    Topology t;
+    auto tx = t.begin_transaction();
+    EXPECT_TRUE(tx.is_ok());
+}
+
+TEST(UdafTopology, EmptyTopologyHasNoCycle) {
+    Topology t;
+    EXPECT_FALSE(t.has_cycle());
+    EXPECT_EQ(t.node_count(), 0u);
+}
+
+TEST(UdafTopology, NodeCountAfterAdd) {
+    Topology t;
+    auto tx = t.begin_transaction();
+    tx.value().add_node({"n1", "h1", "127.0.0.1", 1, {}});
+    tx.value().add_node({"n2", "h2", "127.0.0.1", 2, {}});
+    EXPECT_TRUE(t.commit(std::move(tx).value()).is_ok());
+    EXPECT_EQ(t.node_count(), 2u);
+}
+
+TEST(UdafTopology, CommitAfterMove) {
+    Topology t;
+    auto tx = t.begin_transaction();
+    tx.value().add_node({"x", "h", "127.0.0.1", 1, {}});
+    TopologyTransaction moved = std::move(tx.value());
+    EXPECT_TRUE(t.commit(std::move(moved)).is_ok());
+}
