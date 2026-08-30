@@ -392,6 +392,23 @@ TEST(UdafCliClient, RunWithTrustedNode) {
     EXPECT_NE(cout.str().find("\"sequence\""), std::string::npos);
 }
 
+// 覆盖 cli.cpp:104-105 run_remote 返回 err → kWhitelistDenied 分支
+TEST(UdafCliClient, RunUntrustedNodeDenied) {
+    CerrRedirect cerr;
+    // run-target-2 不在信任列表中
+    int rc = run_cmd("run", {"--node", "run-target-2-untrusted",
+                              "--", "/bin/echo", "x"});
+    EXPECT_EQ(rc, 10);  // kWhitelistDenied
+    EXPECT_NE(cerr.str().find("拒绝"), std::string::npos);
+}
+
+// 覆盖 cli.cpp:114 missing separator → kUsage 分支
+TEST(UdafCliRun, NoSeparatorAfterNodeFlag) {
+    CerrRedirect cerr;
+    int rc = run_cmd("run", {"--node", "x", "/bin/echo"});  // 缺 --
+    EXPECT_EQ(rc, 1);  // kUsage
+}
+
 TEST(UdafCliClient, PushToTrustedNode) {
     int rc = run_cmd("trust", {"add", "push-target-1",
         "1111111111111111111111111111111111111111111111111111111111111111",
