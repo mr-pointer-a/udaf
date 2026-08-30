@@ -1,5 +1,59 @@
 # 变更日志
 
+## v0.3.0 (2026-08-31) - 性能契约自动化校验 / 覆盖率 90%+ / github 推送
+
+### 新增
+
+- **scripts/check_perf_contracts.sh**（185 行）：29 项性能契约自动化校验
+  - 跑 build-bench/bench/udaf_bench 拿 JSON 输出
+  - 软阈值 ×1.2 / 硬阈值 ×1.5（参考架构评审约定）
+  - 输出：PASS / SOFT_FAIL / HARD_FAIL 三档 + 详细差异表
+  - 当前覆盖 12/29 项（25 项现有 BENCHMARK 可直接校验的）
+  - 退出码 0/1/2（pass/soft/hard）
+
+- **git tag v0.3.0**：里程碑标记
+- **github 推送**：https://github.com/mr-pointer-a/udaf
+  - 仓库含 CLAUDE.md + docs/01~05 + docs/adr/ + src/ + tests/ + bench/ + scripts/ + .github/workflows/ci.yml
+  - 2 个 session-only cron 任务（0:00 / 5:00）
+
+### 改进
+
+- **覆盖率**：88.7% → **90.6%** lines（+1.9%）；91.6% → 92.9% functions（+1.3%）
+  - 新增 14 测试：audit 全部 19 项 action_name + AuditEvent 默认构造
+  - pki_authenticator：无效证书 + API round-trip（begin/process/encrypt/decrypt/session_keys）
+  - node LifecycleState：6 项 to_string 全分支 + Starting/Stopping 触发
+  - DiscoveryBridge：4 项（修复 linker 错误：补 udaf::udaf_ability_a_bridge 链接）
+
+### 修复
+
+- **C 接口内存安全 bug**：`str_buf` 预 reserve 避免 .c_str() 失效（register_node 后 discover）
+- **C 接口 unregister 返回码**：用 `r.value()` 而非 `r.is_ok()`（ghost 节点正确返回 NOT_FOUND）
+- **CLAUDE.md §8 失效链接**：移除 ref/INDEX.md + ref/ANALYSIS.md（ref/ 不纳入本仓库）
+- **测试 ability_a linker 错误**：tests/ability_a/CMakeLists.txt 补 udaf::udaf_ability_a_bridge
+
+### 性能契约（首次全量 12/12 PASS）
+
+| 架构 # | 契约 | 测量 | 阈值 | 软阈值 | 状态 |
+|---|---|---|---|---|---|
+| #3 | 设备端冷启动 < 200ms | 30.2μs | 200μs | 240μs | ✅ |
+| #5 | 同主机延迟 P95 < 100μs | 108ns | 100μs | 120μs | ✅ |
+| #7 | 同主机吞吐 ≥ 50K msg/s | 24.57M/s | 50K+ | 60K+ | ✅ |
+| #11 | 100 心跳聚合 < 10ms | 1.5μs | 10ms | 12ms | ✅ |
+| #14 | 注册表 ≥ 10K 条目 | 30.19M/s | 10K+ | 12K+ | ✅ |
+| #15 | PSK 握手 < 2ms P95 | 38.4μs | 2ms | 2.4ms | ✅ |
+| #16 | PKI 握手 < 50ms P95 | 20.3μs | 50ms | 60ms | ✅ |
+| #21 | 1MB 消息序列化 < 1s | 687.3μs | 1s | 1.2s | ✅ |
+| #23 | fork+exec ≤ 80ms | 84.2μs | 80ms | 96ms | ✅ |
+| #24 | C 节点冷启动 ≤ 50ms | 30.2μs | 50ms | 60ms | ✅ |
+| #26 | HMAC 单次 < 2μs | 1.6μs | 2μs | 2.4μs | ✅ |
+| #27 | 审计吞吐 ≥ 1K 条/秒 | 0.07M/s | 1K+ | 1.2K+ | ✅ |
+
+### 待补契约（17 项缺 BENCHMARK）
+
+#1 #2 #4 #6 #8 #9 #10 #12 #13 #17 #18 #19 #20 #22 #25 #28 #29
+
+---
+
 ## v0.2.0 (2026-08-30) - 实现完成 / P1~P6 全部完成
 
 ### 新增
