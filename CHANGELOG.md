@@ -1,5 +1,36 @@
 # 变更日志
 
+## v0.3.1 (2026-08-31) - 覆盖率 91.1% + ASan/UBSan 全量回归通过
+
+### 新增
+
+- **17 个测试覆盖低覆盖率文件**：
+  - hmac: 空 key / verify 错长 / mismatch
+  - keystore: 文件不存在 / magic 错 / 截断 / 错长度
+  - process_executor: stderr 捕获 / 白名单拒绝 / 空 executable
+  - service_registry: SubscriptionHandle 移动赋值 + 自赋值守卫
+  - udp_socket: EADDRINUSE / 单播频率限制 / 广播频率限制 / 无效 IP / 关闭后 send
+
+### 验证
+
+- **ASan + UBSan 全量回归**：317/317 测试通过（309 unit + 6 integration + 1 fuzz + 1 bench）
+- **测试时间**：10.55 秒（ASan + UBSan 编译运行总耗时）
+- **内存安全**：0 泄漏、0 未定义行为
+
+### 指标
+
+| 维度 | v0.3.0 | v0.3.1 |
+|---|---|---|
+| 测试数 | 292 | 309 |
+| 行覆盖率 | 90.6% | **91.1%** |
+| 函数覆盖率 | 92.9% | 93.2% |
+
+### commit
+
+- `e97e2ca test: 覆盖率 90.6%→91.1%`
+
+---
+
 ## v0.3.0 (2026-08-31) - 性能契约自动化校验 / 覆盖率 90%+ / github 推送
 
 ### 新增
