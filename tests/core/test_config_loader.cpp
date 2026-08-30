@@ -114,11 +114,37 @@ TEST(ConfigLoader, HelpersRoundTrip) {
     EXPECT_EQ(parse_network_mode("PKI"), NetworkMode::Pki);
     EXPECT_FALSE(parse_network_mode("xxx").has_value());
     EXPECT_EQ(to_string(NetworkMode::Psk), "psk");
+    EXPECT_EQ(to_string(NetworkMode::Pki), "pki");  // 覆盖 config_loader.cpp:36
 
     ASSERT_TRUE(parse_log_level("DEBUG").has_value());
     EXPECT_EQ(*parse_log_level("warn"), udaf::core::LogLevel::Warn);
     EXPECT_EQ(*parse_log_level("INFO"), udaf::core::LogLevel::Info);
+    EXPECT_EQ(*parse_log_level("critical"), udaf::core::LogLevel::Critical);  // 覆盖行 48
+    EXPECT_EQ(*parse_log_level("off"), udaf::core::LogLevel::Off);              // 覆盖行 49
     EXPECT_FALSE(parse_log_level("invalid").has_value());
+}
+
+// 覆盖 config_loader.cpp:57-65 YAML 解析失败 + 空 root
+TEST(ConfigLoader, MalformedYamlReturnsErr) {
+    ConfigLoader loader;
+    // 无效 YAML（缺少冒号）触发 YAML::Exception
+    auto r = loader.load_from_string("node_id : : invalid: yaml: :::");
+    EXPECT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::CONFIG_PARSE_FAILED);
+}
+
+// 覆盖 config_loader.cpp:114-123 YAML 字段提取失败（schema_version 字段类型错误）
+TEST(ConfigLoader, WrongTypeReturnsErr) {
+    ConfigLoader loader;
+    // schema_version 期望 uint，但传字符串 "abc"
+    const std::string yaml = R"YAML(
+node_id: "h1"
+node_role: "host"
+schema_version: "not_a_number"
+)YAML";
+    auto r = loader.load_from_string(yaml);
+    EXPECT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::CONFIG_INVALID_VALUE);
 }
 
 // ===== 边界用例：补齐 validate() 各分支 =====

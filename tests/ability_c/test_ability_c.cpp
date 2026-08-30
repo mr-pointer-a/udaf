@@ -98,6 +98,19 @@ TEST(AbilityC_Executor, ForkExecUnderContract) {
     EXPECT_LT(avg_us, 80000u) << "avg fork+exec=" << avg_us << "us";
 }
 
+// 覆盖 process_executor.cpp:94 子进程被信号终止 → WIFEXITED 为 false → exit_code = -1
+TEST(AbilityC_Executor, ChildKilledBySignalReturnsMinusOne) {
+    // /bin/sh 自杀式：kill -9 $$ 让当前 shell 进程被 SIGKILL
+    // WIFEXITED 返回 false → res.exit_code = -1
+    ProcessExecutor::Options opts;
+    opts.executable = "/bin/sh";
+    opts.args = {"-c", "kill -9 $$"};
+    opts.allowed_executables = {"/bin/sh"};
+    auto r = ProcessExecutor::execute(opts);
+    ASSERT_TRUE(r.is_ok());
+    EXPECT_EQ(r.value().exit_code, -1) << "信号杀死的子进程 exit_code 应为 -1";
+}
+
 TEST(AbilityC_CmdExecNode, Lifecycle) {
     CmdExecNode n;
     n.set_allowed_executables({"/bin/echo"});
@@ -233,6 +246,8 @@ TEST(AbilityC_HeartbeatNode, ReloadCycle) {
 
 // ===== 覆盖 worker() 实际执行路径 =====
 
+// 触发 worker() 实际执行路径（nodes.cpp:64-80）
+// 通过直接 push 到 in_cmd 端口让 worker recv + execute + try_send
 TEST(AbilityC_CmdExecNode, WorkerExecutesEcho) {
     CmdExecNode node;
     node.set_allowed_executables({"/bin/echo"});
@@ -240,18 +255,18 @@ TEST(AbilityC_CmdExecNode, WorkerExecutesEcho) {
     ASSERT_TRUE(node.init(cfg).is_ok());
     ASSERT_TRUE(node.start().is_ok());
 
-    // 通过 input 端口发送命令请求（触发 worker() 实际路径）
     udaf::ability_c::messages::CmdRequest req;
     req.command = "/bin/echo";
     req.args    = {"hello"};
-    auto sr = node.out_result().try_send(
-        udaf::ability_c::messages::CmdResult{});  // 先占位让端口激活
-    (void)sr;
-    auto rr = node.in_cmd().recv(100);
-    // 这里只验证端口可工作 + 节点可停止；完整 worker 路径在 §10 集成测试覆盖
+    auto push_r = node.in_cmd().push(req);
+    ASSERT_TRUE(push_r.is_ok());
+
+    // 等待 worker 处理（worker 每 100ms recv 一次）
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
     EXPECT_TRUE(node.stop().is_ok());
 }
 
+// 触发 worker() 错误分支（nodes.cpp:76-78，非白名单 → else 分支）
 TEST(AbilityC_CmdExecNode, WorkerRejectsNonWhitelisted) {
     CmdExecNode node;
     node.set_allowed_executables({"/bin/echo"});
@@ -259,9 +274,34 @@ TEST(AbilityC_CmdExecNode, WorkerRejectsNonWhitelisted) {
     ASSERT_TRUE(node.init(cfg).is_ok());
     ASSERT_TRUE(node.start().is_ok());
 
-    // 验证节点启动 + worker 线程已创建 + 可停止
-    EXPECT_EQ(node.state(), udaf::ability_b::node::LifecycleState::Running);
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    // 请求不存在的可执行（仍在白名单内，但执行会失败）
+    // 改用空字符串：opts.executable="" → in_whitelist 空字符串不在列表 → BIZ_AUTH_UNTRUSTED
+    udaf::ability_c::messages::CmdRequest req;
+    req.command = "";  // 空字符串 → executor 返回 BIZ_AUTH_UNTRUSTED
+    auto push_r = node.in_cmd().push(req);
+    ASSERT_TRUE(push_r.is_ok());
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
     EXPECT_TRUE(node.stop().is_ok());
     EXPECT_EQ(node.state(), udaf::ability_b::node::LifecycleState::Stopped);
+}
+
+// 多条请求压力测试（覆盖 worker 循环 + 多次 execute 调用）
+TEST(AbilityC_CmdExecNode, WorkerProcessesMultipleRequests) {
+    CmdExecNode node;
+    node.set_allowed_executables({"/bin/echo"});
+    udaf::ability_b::node::NodeConfig cfg;
+    ASSERT_TRUE(node.init(cfg).is_ok());
+    ASSERT_TRUE(node.start().is_ok());
+
+    constexpr int kCount = 5;
+    for (int i = 0; i < kCount; ++i) {
+        udaf::ability_c::messages::CmdRequest req;
+        req.command = "/bin/echo";
+        req.args    = {"msg-" + std::to_string(i)};
+        auto push_r = node.in_cmd().push(req);
+        ASSERT_TRUE(push_r.is_ok());
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    EXPECT_TRUE(node.stop().is_ok());
 }

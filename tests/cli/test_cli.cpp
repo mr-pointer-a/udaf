@@ -248,6 +248,22 @@ TEST(UdafCliClient, NodeListReturnsOk) {
     EXPECT_NE(cout.str().find("["), std::string::npos);
 }
 
+// 覆盖 cli.cpp:134-135 node list 多节点时输出逗号分隔
+TEST(UdafCliClient, NodeListMultipleNodesOutputsCommas) {
+    // 注册两个节点
+    EXPECT_EQ(run_cmd("node", {"register", "cli-node-1", "host-1", "127.0.0.1", "7101"}), 0);
+    EXPECT_EQ(run_cmd("node", {"register", "cli-node-2", "host-2", "127.0.0.2", "7102"}), 0);
+
+    CoutRedirect cout;
+    EXPECT_EQ(run_cmd("node", {"list"}), 0);
+    const std::string out = cout.str();
+    // 多节点时 list_nodes 返回 ≥ 2 项，循环内 `if (i) std::cout << ",";` 会执行
+    EXPECT_NE(out.find("cli-node-1"), std::string::npos);
+    EXPECT_NE(out.find("cli-node-2"), std::string::npos);
+    // 列表格式: ["node-1","node-2"] - 包含至少一个逗号在方括号内
+    EXPECT_NE(out.find(","), std::string::npos);
+}
+
 TEST(UdafCliClient, NodeRegisterThenUnregister) {
     int rc = run_cmd("node", {"register", "cli-test-node", "test-host",
                                "127.0.0.1", "9999"});
@@ -285,6 +301,32 @@ TEST(UdafCliClient, TrustAddListRemove) {
 TEST(UdafCliClient, TrustAddBadHexRejected) {
     int rc = run_cmd("trust", {"add", "bad", "not-hex", "cap"});
     EXPECT_EQ(rc, 7);  // kInvalidArg
+}
+
+// 覆盖 cli.cpp:186-187 trust remove 返回错误时 → kInvalidArg
+TEST(UdafCliClient, TrustRemoveMissingReturnsInvalidArg) {
+    // 不存在的节点 → client->trust_remove 返回 Err → 映射为 kInvalidArg
+    int rc = run_cmd("trust", {"remove", "ghost-node-trust-remove"});
+    EXPECT_EQ(rc, 7);  // kInvalidArg
+}
+
+// 覆盖 cli.cpp:134-135 trust list 多节点时的逗号分隔
+TEST(UdafCliClient, TrustListMultipleEntriesFormatsCommas) {
+    int rc = run_cmd("trust", {"add", "cli-multi-1",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+        "cap_a"});
+    EXPECT_EQ(rc, 0);
+    rc = run_cmd("trust", {"add", "cli-multi-2",
+        "2222222222222222222222222222222222222222222222222222222222222222",
+        "cap_b"});
+    EXPECT_EQ(rc, 0);
+
+    CoutRedirect cout;
+    rc = run_cmd("trust", {"list"});
+    EXPECT_EQ(rc, 0);
+    const std::string out = cout.str();
+    EXPECT_NE(out.find("cli-multi-1"), std::string::npos);
+    EXPECT_NE(out.find("cli-multi-2"), std::string::npos);
 }
 
 TEST(UdafCliClient, DiscoverEmpty) {

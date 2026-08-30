@@ -152,9 +152,24 @@ core::Result<bool> Client::unregister_node(std::string node_id) noexcept {
 
 std::vector<TrustEntry> Client::trust_list() noexcept {
     std::vector<TrustEntry> out;
-    // 通过已知 entry 列表来枚举——SDK 层暂无 list()，先返回空占位，
-    // 实际 list 由 CLI 层调用 trust_add 注册的条目回显
-    (void)impl_->whitelist;
+    if (!impl_->whitelist) return out;
+    auto entries = impl_->whitelist->snapshot();
+    out.reserve(entries.size());
+    for (const auto& e : entries) {
+        TrustEntry t;
+        t.node_id = e.node_id;
+        // 将 32 字节 fingerprint 转 hex 字符串（C 接口需要）
+        t.fingerprint_sha256_hex.reserve(64);
+        for (auto b : e.fingerprint_sha256_) {
+            char hi = static_cast<char>((b >> 4) & 0x0F);
+            char lo = static_cast<char>(b & 0x0F);
+            t.fingerprint_sha256_hex.push_back(static_cast<char>(hi < 10 ? '0' + hi : 'a' + hi - 10));
+            t.fingerprint_sha256_hex.push_back(static_cast<char>(lo < 10 ? '0' + lo : 'a' + lo - 10));
+        }
+        t.capabilities.assign(e.allowed_capabilities_.begin(),
+                              e.allowed_capabilities_.end());
+        out.push_back(std::move(t));
+    }
     return out;
 }
 

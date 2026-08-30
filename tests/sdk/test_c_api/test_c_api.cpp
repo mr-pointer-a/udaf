@@ -219,6 +219,64 @@ TEST_F(CSdkTmp, TrustListEmpty) {
     udaf_client_destroy(cli);
 }
 
+// 覆盖 udaf_c.cpp:150-157 trust_list 循环体 + push_file/pull_file success 分支
+TEST_F(CSdkTmp, TrustListWithEntriesAndFileOps) {
+    udaf_client_config_t cfg{};
+    cfg.node_id = "c-host";
+    cfg.audit_path = path_.c_str();  // 测试 fixture 提供的临时路径
+    void* cli = nullptr;
+    ASSERT_EQ(udaf_client_create(&cfg, &cli), UDAF_OK);
+
+    // 信任一个节点
+    const char* valid_fp = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const char* caps[] = {"file_xfer", "cmd_exec"};
+    ASSERT_EQ(udaf_client_trust_add(cli, "trusted-dev", valid_fp, caps, 2), UDAF_OK);
+
+    // trust_list 应返回 1 条（只校验 node_id 和 capability_count，不解引用 capabilities 指针）
+    udaf_trust_entry_t* entries = nullptr;
+    uint32_t count = 0;
+    ASSERT_EQ(udaf_client_trust_list(cli, &entries, &count), UDAF_OK);
+    EXPECT_EQ(count, 1u);
+    EXPECT_STREQ(entries[0].node_id, "trusted-dev");
+    EXPECT_EQ(entries[0].capability_count, 2u);
+    EXPECT_NE(entries[0].fingerprint_hex, nullptr);
+    udaf_client_free_trust_entries(entries, count);
+
+    // push_file success（覆盖 udaf_c.cpp:198-200）
+    udaf_audit_result_t push_res{};
+    ASSERT_EQ(udaf_client_push_file(cli, "/src/path", "trusted-dev", "/dst/path", &push_res),
+              UDAF_OK);
+    EXPECT_GT(push_res.sequence, 0u);
+
+    // pull_file success（覆盖 udaf_c.cpp:214-216）
+    udaf_audit_result_t pull_res{};
+    ASSERT_EQ(udaf_client_pull_file(cli, "trusted-dev", "/remote", "/local", &pull_res),
+              UDAF_OK);
+    EXPECT_GT(pull_res.sequence, 0u);
+
+    // run_remote success（覆盖 udaf_c.cpp:182-184）
+    const char* args[] = {"hello"};
+    udaf_audit_result_t run_res{};
+    ASSERT_EQ(udaf_client_run_remote(cli, "trusted-dev", "/bin/echo", args, 1, &run_res),
+              UDAF_OK);
+    EXPECT_GT(run_res.sequence, 0u);
+
+    udaf_client_destroy(cli);
+}
+
+// 覆盖 udaf_c.cpp:130 trust_add 返回非 INVALID_ARG 的 INTERNAL 路径
+//   触发方式：传入正确的 hex（64 字符）但 fuzzer 内部转换失败（实际很难触发）
+//   这里改为覆盖 unregister_node 返回 false（节点不存在）的 NOT_FOUND 路径
+TEST_F(CSdkTmp, UnregisterMissingNodeReturnsNotFound) {
+    udaf_client_config_t cfg{};
+    cfg.node_id = "c-host";
+    void* cli = nullptr;
+    ASSERT_EQ(udaf_client_create(&cfg, &cli), UDAF_OK);
+    // 节点不存在 → r.value() == false → UDAF_ERR_NOT_FOUND
+    EXPECT_EQ(udaf_client_unregister_node(cli, "ghost-node"), UDAF_ERR_NOT_FOUND);
+    udaf_client_destroy(cli);
+}
+
 TEST_F(CSdkTmp, TrustListNullArgs) {
     EXPECT_EQ(udaf_client_trust_list(nullptr, nullptr, nullptr), UDAF_ERR_INVALID_ARG);
     udaf_client_config_t cfg{};

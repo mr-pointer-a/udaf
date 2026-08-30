@@ -130,6 +130,67 @@ TEST(UdafSerialization, TypeMismatch) {
     EXPECT_EQ(r.error(), ErrorCode::SERIALIZE_TYPE_MISMATCH);
 }
 
+// 覆盖 serializer.cpp:53-55 frame.size() < kHeaderSize
+TEST(UdafSerialization, FrameTooShort) {
+    SimpleSerializer dec;
+    std::vector<std::uint8_t> tiny = {0x55, 0x44, 0x41};  // 只有 3 字节
+    auto r = dec.decode_payload(tiny);
+    EXPECT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), ErrorCode::SERIALIZE_DECODE_FAILED);
+}
+
+// 覆盖 serializer.cpp:57-60 magic mismatch
+TEST(UdafSerialization, BadMagic) {
+    SimpleSerializer dec;
+    std::vector<std::uint8_t> bad;
+    bad.resize(9);  // kHeaderSize
+    // magic = 0xDEADBEEF（不是 UDAF）
+    bad[0] = 0xDE; bad[1] = 0xAD; bad[2] = 0xBE; bad[3] = 0xEF;
+    bad[4] = 0; bad[5] = 0; bad[6] = 0; bad[7] = 1;
+    bad[8] = 0;
+    auto r = dec.decode_payload(bad);
+    EXPECT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), ErrorCode::SERIALIZE_VERSION_MISMATCH);
+}
+
+// 覆盖 serializer.cpp:67-70 frame.size() < kHeaderSize + tlen
+TEST(UdafSerialization, TypeNameTruncated) {
+    SimpleSerializer dec;
+    std::vector<std::uint8_t> bad;
+    bad.resize(10);  // 比声称的 type_len 短
+    bad[0] = 0x55; bad[1] = 0x44; bad[2] = 0x41; bad[3] = 0x46;  // magic
+    bad[4] = 0; bad[5] = 0; bad[6] = 0; bad[7] = 1;  // version
+    bad[8] = 100;  // type_len=100 但只剩 1 字节
+    bad[9] = 'x';
+    auto r = dec.decode_payload(bad);
+    EXPECT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), ErrorCode::SERIALIZE_DECODE_FAILED);
+}
+
+// 覆盖 serializer.cpp:80-82 decode_payload_inplace 返回错误
+class FailingDecodeSerializer : public SerializerBase {
+public:
+    [[nodiscard]] std::string type_name() const noexcept override { return "failing_decode"; }
+    [[nodiscard]] std::uint32_t schema_version() const noexcept override { return 1; }
+    [[nodiscard]] bool accepts_type(std::string_view) const noexcept override { return true; }
+    [[nodiscard]] udaf::core::Result<std::vector<std::uint8_t>>
+    encode_payload() const noexcept override { return udaf::core::Result<std::vector<std::uint8_t>>::ok({}); }
+    [[nodiscard]] udaf::core::Result<void>
+    decode_payload_inplace(std::span<const std::uint8_t>) noexcept override {
+        return udaf::core::Result<void>::err(udaf::core::ErrorCode::SERIALIZE_DECODE_FAILED);
+    }
+};
+
+TEST(UdafSerialization, DecodePayloadInplaceFails) {
+    FailingDecodeSerializer enc;
+    FailingDecodeSerializer dec;
+    auto frame = enc.encode({});
+    ASSERT_TRUE(frame.is_ok());
+    auto r = dec.decode_payload(frame.value());
+    EXPECT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), ErrorCode::SERIALIZE_DECODE_FAILED);
+}
+
 // ---------------- C2: Port ----------------
 
 TEST(UdafPort, TryRecvEmpty) {

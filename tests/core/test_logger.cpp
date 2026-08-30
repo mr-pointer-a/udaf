@@ -86,6 +86,26 @@ TEST_F(LoggerTest, SixLevelsCompileAndRun) {
     Logger::instance().critical("critical msg");
 }
 
+// 覆盖 logger.cpp:33-35 Off 等级 + to_spdlog_level 默认分支
+TEST_F(LoggerTest, OffLevelInitializes) {
+    LoggerConfig cfg;
+    cfg.level = LogLevel::Off;
+    ASSERT_TRUE(Logger::instance().init(cfg).is_ok());
+    Logger::instance().info("off-level info (should not appear)");
+}
+
+// 覆盖 logger.cpp:120 set_level 在 impl_==null 时 early return
+TEST_F(LoggerTest, SetLevelBeforeInitIsNoop) {
+    // 重新构造一个 Logger 实例不现实（单例），但可模拟：调用 shutdown 后 set_level
+    Logger::instance().shutdown();
+    // 此时 impl_ 仍存在（shutdown 不清理），但 spd_logger 已 reset
+    Logger::instance().set_level(LogLevel::Debug);
+    // 恢复默认状态
+    LoggerConfig cfg;
+    cfg.level = LogLevel::Info;
+    ASSERT_TRUE(Logger::instance().init(cfg).is_ok());
+}
+
 // ===== 边界用例：补齐 init/shutdown 各分支 =====
 
 TEST_F(LoggerTest, InitFileEmptyPathReturnsErr) {

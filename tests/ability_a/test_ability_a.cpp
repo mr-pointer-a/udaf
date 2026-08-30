@@ -157,6 +157,30 @@ TEST(UdafRegistry, SubscriptionHandleMoveSelfAssign) {
     EXPECT_EQ(h->id(), id);  // 仍有效
 }
 
+// 覆盖 service_registry.cpp 行 11-25 SubscriptionHandle 移动构造/赋值
+// （之前的测试移动的是 unique_ptr<Handle>，不是 Handle 本身）
+TEST(UdafRegistry, SubscriptionHandleDirectMove) {
+    using udaf::ability_a::registry::SubscriptionHandle;
+    ServiceRegistry reg;
+    std::atomic<int> cnt{0};
+    // 移动构造：从 unique_ptr 持有对象移动构造出独立 Handle
+    auto h_unique = reg.subscribe([&](RegistryEvent, const RegistryEntry&) { ++cnt; });
+    ASSERT_NE(h_unique, nullptr);
+    auto id = h_unique->id();
+    SubscriptionHandle moved(std::move(*h_unique));
+    h_unique.reset();
+    EXPECT_TRUE(moved.valid());
+    EXPECT_EQ(moved.id(), id);
+
+    // 移动赋值：再订阅一个，把 Handle 移动赋值过去
+    auto h2_unique = reg.subscribe([&](RegistryEvent, const RegistryEntry&) { ++cnt; });
+    ASSERT_NE(h2_unique, nullptr);
+    auto id2 = h2_unique->id();
+    moved = std::move(*h2_unique);
+    h2_unique.reset();
+    EXPECT_EQ(moved.id(), id2);
+}
+
 TEST(UdafRegistry, Capacity10000) {
     ServiceRegistry reg;
     for (int i = 0; i < 10000; ++i) {

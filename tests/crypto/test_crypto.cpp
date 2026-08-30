@@ -392,6 +392,17 @@ TEST(UdafCrypto, KeystoreLoadBadMagic) {
     EXPECT_EQ(loaded.error(), udaf::core::ErrorCode::SERIALIZE_VERSION_MISMATCH);
 }
 
+// 覆盖 keystore.cpp:65-67 写入到不存在的目录 → BIZ_FILE_NOT_FOUND
+TEST(UdafCrypto, KeystoreSaveToInvalidPathReturnsErr) {
+    auto psk = udaf::crypto::generate_psk();
+    ASSERT_TRUE(psk.is_ok());
+    // 路径中包含不存在的目录，ofstream::open 会失败
+    auto r = udaf::crypto::save_psk_to_file(
+        "/nonexistent_dir_xyz_12345/subdir/psk.bin", psk.value());
+    EXPECT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::BIZ_FILE_NOT_FOUND);
+}
+
 TEST(UdafCrypto, KeystoreLoadTruncated) {
     // 文件 magic 对但 PSK 数据截断 → PROTOCOL_TRUNCATED_BUFFER（覆盖行 47-49）
     TmpDir tmp;
