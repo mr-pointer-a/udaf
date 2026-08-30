@@ -48,6 +48,16 @@ std::size_t PeerWhitelist::size() const noexcept {
     return entries_.size();
 }
 
+std::vector<WhitelistEntry> PeerWhitelist::snapshot() const noexcept {
+    std::lock_guard<std::mutex> lk(mtx_);
+    std::vector<WhitelistEntry> out;
+    out.reserve(entries_.size());
+    for (const auto& [k, v] : entries_) {
+        out.push_back(v);
+    }
+    return out;
+}
+
 void PeerWhitelist::clear() noexcept {
     std::lock_guard<std::mutex> lk(mtx_);
     entries_.clear();

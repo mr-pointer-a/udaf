@@ -64,6 +64,9 @@ public:
     /// 节点数
     [[nodiscard]] std::size_t size() const noexcept;
 
+    /// 快照全部条目（按字典序排序，复制返回）
+    [[nodiscard]] std::vector<WhitelistEntry> snapshot() const noexcept;
+
     /// 清空（仅测试）
     void clear() noexcept;
 

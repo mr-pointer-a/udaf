@@ -409,6 +409,24 @@ TEST(UdafCliRun, NoSeparatorAfterNodeFlag) {
     EXPECT_EQ(rc, 1);  // kUsage
 }
 
+// 覆盖 cli.cpp:164-170 trust list 输出 capabilities 循环
+TEST(UdafCliClient, TrustListOutputsCapabilities) {
+    int rc = run_cmd("trust", {"add", "trust-cap-test",
+        "3333333333333333333333333333333333333333333333333333333333333333",
+        "cap_a", "cap_b", "cap_c"});
+    EXPECT_EQ(rc, 0);
+
+    CoutRedirect cout;
+    rc = run_cmd("trust", {"list"});
+    EXPECT_EQ(rc, 0);
+    const std::string out = cout.str();
+    EXPECT_NE(out.find("trust-cap-test"), std::string::npos);
+    // unordered_set 不保证顺序，逐个验证 capability
+    EXPECT_NE(out.find("cap_a"), std::string::npos);
+    EXPECT_NE(out.find("cap_b"), std::string::npos);
+    EXPECT_NE(out.find("cap_c"), std::string::npos);
+}
+
 TEST(UdafCliClient, PushToTrustedNode) {
     int rc = run_cmd("trust", {"add", "push-target-1",
         "1111111111111111111111111111111111111111111111111111111111111111",
