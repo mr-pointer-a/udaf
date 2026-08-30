@@ -337,3 +337,81 @@ TEST(UdafCliClient, MigrateNoArgsReturnsUsage) {
     int rc = run_cmd("migrate", {});
     EXPECT_EQ(rc, 1);  // kUsage
 }
+
+// ----- 通过 Client 完整路径测试（触发 audit append 等） -----
+
+TEST(UdafCliClient, PskRotateWithValidPath) {
+    CoutRedirect cout;
+    int rc = run_cmd("psk", {"rotate", "/tmp/new_psk.bin"});
+    EXPECT_EQ(rc, 0);
+    EXPECT_NE(cout.str().find("\"sequence\""), std::string::npos);
+}
+
+TEST(UdafCliClient, PskRotateEmptyPathRejected) {
+    CerrRedirect cerr;
+    int rc = run_cmd("psk", {"rotate", ""});
+    EXPECT_EQ(rc, 7);  // kInvalidArg
+}
+
+TEST(UdafCliClient, MigrateWithValidArgs) {
+    CoutRedirect cout;
+    int rc = run_cmd("migrate", {"/src/path", "/dst/path"});
+    EXPECT_EQ(rc, 0);
+    EXPECT_NE(cout.str().find("\"sequence\""), std::string::npos);
+}
+
+TEST(UdafCliClient, AuthPskWithTrustedNode) {
+    // 先添加信任
+    int rc = run_cmd("trust", {"add", "trusted-node-1",
+        "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+        "cmd_exec"});
+    EXPECT_EQ(rc, 0);
+
+    CoutRedirect cout;
+    rc = run_cmd("auth", {"psk", "trusted-node-1"});
+    EXPECT_EQ(rc, 0);
+    EXPECT_NE(cout.str().find("\"sequence\""), std::string::npos);
+}
+
+TEST(UdafCliClient, AuthPskWithUntrustedNode) {
+    CerrRedirect cerr;
+    int rc = run_cmd("auth", {"psk", "unknown-evil-node"});
+    EXPECT_EQ(rc, 10);  // kWhitelistDenied
+}
+
+TEST(UdafCliClient, RunWithTrustedNode) {
+    // 先信任
+    int rc = run_cmd("trust", {"add", "run-target-1",
+        "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+        "cmd_exec"});
+    EXPECT_EQ(rc, 0);
+
+    CoutRedirect cout;
+    rc = run_cmd("run", {"--node", "run-target-1", "--", "/bin/echo", "hi"});
+    EXPECT_EQ(rc, 0);
+    EXPECT_NE(cout.str().find("\"sequence\""), std::string::npos);
+}
+
+TEST(UdafCliClient, PushToTrustedNode) {
+    int rc = run_cmd("trust", {"add", "push-target-1",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+        "file_xfer"});
+    EXPECT_EQ(rc, 0);
+
+    CoutRedirect cout;
+    rc = run_cmd("push", {"/tmp/src", "push-target-1", "/tmp/dst"});
+    EXPECT_EQ(rc, 0);
+    EXPECT_NE(cout.str().find("\"sequence\""), std::string::npos);
+}
+
+TEST(UdafCliClient, PullFromTrustedNode) {
+    int rc = run_cmd("trust", {"add", "pull-target-1",
+        "2222222222222222222222222222222222222222222222222222222222222222",
+        "file_xfer"});
+    EXPECT_EQ(rc, 0);
+
+    CoutRedirect cout;
+    rc = run_cmd("pull", {"pull-target-1", "/tmp/remote", "/tmp/local"});
+    EXPECT_EQ(rc, 0);
+    EXPECT_NE(cout.str().find("\"sequence\""), std::string::npos);
+}
