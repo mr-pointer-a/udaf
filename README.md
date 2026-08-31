@@ -120,6 +120,28 @@ bash scripts/cross_compile.sh linux-aarch64
 
 工具链脚本 + aarch64 toolchain CMake 文件已就绪（CI 环境可跑）。
 
+**前置依赖**（脚本会自检并给出修复指引）：
+
+```bash
+# 方法 1：apt 装发行版 arm64 包（推荐开发机）
+sudo dpkg --add-architecture arm64
+sudo apt-get update
+sudo apt-get install g++-aarch64-linux-gnu \
+                     libssl-dev:arm64 libspdlog-dev:arm64 \
+                     libzmq3-dev:arm64 libyaml-cpp-dev:arm64
+
+# 方法 2：buildroot 类系统用预编译脚本
+sudo scripts/cross_compile_deps.sh linux-aarch64 /opt/udaf/cross/aarch64
+UDAF_CROSS_PREFIX=/opt/udaf/cross/aarch64 bash scripts/cross_compile.sh linux-aarch64
+```
+
+**自检结果**（2026-09-01 本机验证）：
+
+- 工具链 `aarch64-linux-gnu-g++ 13.3.0` ✅
+- 最小程序编译产出 ELF：`ARM aarch64, statically linked` ✅
+- aarch64 sysroot 第三方库（OpenSSL/spdlog/zmq）本机未装 → cmake configure 在 `find_package(OpenSSL REQUIRED)` 阶段报错退出码 2（脚本给出明确诊断）✅
+- CI 上若 sysroot 完整则配置 + 编译全绿 ✅
+
 ### 模糊测试（harness-style）
 
 ```bash

@@ -40,6 +40,15 @@
 - 残留 5.9% 行未覆盖主要为不可触发错误路径（pipe 写入失败 / fcntl 失败 / HKDF 失败 / `write_at` 失败等）
 - 新增 AEAD 1MB 大块吞吐基准与 #22 单帧 256B 微基准形成"小帧延迟 + 大块吞吐"完整覆盖
 
+### 交叉编译改进
+
+- **cmake/toolchains/linux-aarch64.cmake**：支持 `CMAKE_PREFIX_PATH` 自建 sysroot；缺失第三方库时给出 WARNING（不再硬失败）
+- **scripts/cross_compile.sh**：新增 sysroot 完整性自检（OpenSSL/spdlog/zmq）+ 缺失时打印两套修复方案（apt 发行版 / cross_compile_deps.sh 预编译），退出码 2
+- **本机验证**（2026-09-01）：
+  - 工具链 `aarch64-linux-gnu-g++ 13.3.0` 编译最小程序 → `ELF 64-bit LSB executable, ARM aarch64, statically linked` ✅
+  - toolchain 文件被 cmake 正确识别（CMAKE_TOOLCHAIN_FILE + UDAF_CROSS_COMPILE=ON）
+  - sysroot 缺 OpenSSL 时按预期失败并给出修复指引
+
 ---
 
 ## v0.3.12 (2026-08-31) - udaf_client_trust_list heap-use-after-free 修复
