@@ -17,6 +17,8 @@ struct ClientRep {
     std::vector<std::string>            str_buf;       // 给 discover/trust 列表分配字符串
     std::vector<udaf_node_entry_t>      node_entries;
     std::vector<udaf_trust_entry_t>     trust_entries;
+    // 给 trust_entries.capabilities 用的字符串容器（每个 entry 一个子 vector，地址稳定直到下次 trust_list）
+    std::vector<std::vector<std::string>> trust_caps_buf;
 };
 
 std::string copy_cstr(const char* s) {
@@ -144,16 +146,33 @@ udaf_error_t udaf_client_trust_list(void* client, udaf_trust_entry_t** out_entri
     if (!client || !out_entries || !out_count) return UDAF_ERR_INVALID_ARG;
     auto* rep = static_cast<ClientRep*>(client);
     rep->trust_entries.clear();
+    rep->str_buf.clear();
+    rep->trust_caps_buf.clear();
     auto list = rep->client->trust_list();
+    rep->str_buf.reserve(list.size() * 2);  // 每条 2 个字符串字段：node_id/fp
+    rep->trust_caps_buf.reserve(list.size());
     rep->trust_entries.reserve(list.size());
     for (const auto& t : list) {
+        // 将所有字符串字段复制到 rep->str_buf 中，确保指针在 rep 生命周期内有效
+        rep->str_buf.push_back(t.node_id);
+        const std::string& node_id_ref = rep->str_buf.back();
+        rep->str_buf.push_back(t.fingerprint_sha256_hex);
+        const std::string& fp_ref = rep->str_buf.back();
+
+        // capability 字符串需要单独 vector，存到 rep->trust_caps_buf（地址稳定到下次 trust_list）
+        std::vector<std::string> cap_storage;
+        cap_storage.reserve(t.capabilities.size());
+        for (const auto& c : t.capabilities) cap_storage.push_back(c);
+        rep->trust_caps_buf.push_back(std::move(cap_storage));
+        const auto& caps_ref = rep->trust_caps_buf.back();
+
         udaf_trust_entry_t te{};
-        te.node_id            = t.node_id.c_str();
-        te.fingerprint_hex    = t.fingerprint_sha256_hex.c_str();
-        te.capability_count   = static_cast<uint32_t>(t.capabilities.size());
-        te.capabilities       = t.capabilities.empty()
+        te.node_id            = node_id_ref.c_str();
+        te.fingerprint_hex    = fp_ref.c_str();
+        te.capability_count   = static_cast<uint32_t>(caps_ref.size());
+        te.capabilities       = caps_ref.empty()
                                   ? nullptr
-                                  : reinterpret_cast<const char* const*>(t.capabilities.data());
+                                  : reinterpret_cast<const char* const*>(caps_ref.data());
         rep->trust_entries.push_back(te);
     }
     *out_entries = rep->trust_entries.empty() ? nullptr : rep->trust_entries.data();

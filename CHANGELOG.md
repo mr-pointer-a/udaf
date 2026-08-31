@@ -1,5 +1,30 @@
 # 变更日志
 
+## v0.3.12 (2026-08-31) - udaf_client_trust_list heap-use-after-free 修复
+
+### 修复
+
+- **src/sdk/udaf_c.cpp**：udaf_client_trust_list 堆释放后使用（ASan 触发）
+  - 原实现：返回的 `te.node_id` / `te.fingerprint_hex` / `te.capabilities` 指针指向 `rep->client->trust_list()` 返回的临时 `vector<TrustEntry>` 内部字符串
+  - 临时 vector 在表达式结束时析构，所有指针悬空
+  - 后续 `EXPECT_STREQ(entries[0].node_id, ...)` 触发 ASan 堆释放后使用
+  - 修复：将 node_id / fingerprint_hex 字符串复制到 `rep->str_buf`，capabilities 字符串数组复制到新增的 `rep->trust_caps_buf`（成员存储，地址稳定）
+  - 触发测试：CSdkTmp.TrustListWithEntriesAndFileOps（修复前 heap-use-after-free，修复后 PASS）
+- **tests/sdk/test_c_api/test_c_api.cpp**：现有效暴露该 bug
+  - 原 `udaf_client_free_trust_entries` 是空实现（内部缓冲），但未识别指针指向临时对象
+
+### 指标
+
+- 测试通过：405 → 406 (CSdkTmp.TrustListWithEntriesAndFileOps 由 ASan FAIL 转为 PASS)
+- ASan 堆释放后使用 bug 数：1 → 0
+- 代码覆盖率：trust_list 相关行 + capabilities 字符串构造路径进入
+
+### 相关
+
+- 对照函数 `udaf_client_discover`（src/sdk/udaf_c.cpp:63-89）早已正确将字符串存入 `rep->str_buf` 成员；本次同步 trust_list 修复
+
+---
+
 ## v0.3.11 (2026-08-31) - TlsContext 覆盖率补充
 
 ### 新增
