@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cstring>
 #include <string>
+#include <utility>
 
 namespace udaf::platform::fs {
 
@@ -147,6 +148,36 @@ core::Result<void> Wal::write_file_header() noexcept {
     return core::Result<void>::ok();
 }
 
+std::pair<std::uint64_t, std::uint64_t> Wal::scan_entries_for_max_seq() noexcept {
+    std::uint64_t max_seq = 0;
+    std::uint64_t count = 0;
+    if (seek_set(fd_.get(), static_cast<off_t>(kFileHeaderSize)) >= 0) {
+        while (true) {
+            const off_t cur = ::lseek(fd_.get(), 0, SEEK_CUR);
+            struct stat st2{};
+            if (::fstat(fd_.get(), &st2) < 0) break;
+            if (cur >= st2.st_size) break;
+            std::uint8_t hdr[kEntryHeaderSize];
+            ssize_t hn = read_at(fd_.get(), hdr, kEntryHeaderSize, cur);
+            if (hn < static_cast<ssize_t>(kEntryHeaderSize)) break;
+            std::uint32_t hm = 0, hs = 0;
+            std::uint64_t hsq = 0;
+            std::uint32_t al = 0, pl = 0;
+            std::memcpy(&hm, hdr + 0, 4);
+            std::memcpy(&hs, hdr + 4, 4);
+            std::memcpy(&hsq, hdr + 8, 8);
+            std::memcpy(&al, hdr + 25, 4);
+            std::memcpy(&pl, hdr + 29, 4);
+            if (hm != kFileMagic || hs != WalEntry::kSchemaVersion) break;
+            if (hsq > max_seq) max_seq = hsq;
+            ++count;
+            const off_t next = cur + static_cast<off_t>(kEntryHeaderSize + al + pl);
+            if (::lseek(fd_.get(), next, SEEK_SET) < 0) break;
+        }
+    }
+    return {max_seq, count};
+}
+
 core::Result<std::uint64_t> Wal::read_file_header() noexcept {
     std::uint8_t buf[kFileHeaderSize];
     ssize_t n = read_at(fd_.get(), buf, kFileHeaderSize, 0);
@@ -181,33 +212,7 @@ core::Result<std::uint64_t> Wal::read_file_header() noexcept {
         size_bytes_.store(static_cast<std::uint64_t>(st.st_size), std::memory_order_relaxed);
     }
     // next_seq 通过扫描 entries 计算（避免 O_APPEND 模式下 pwrite 破坏布局的问题）
-    std::uint64_t max_seq = 0;
-    std::uint64_t count = 0;
-    if (seek_set(fd_.get(), static_cast<off_t>(kFileHeaderSize)) >= 0) {
-        while (true) {
-            off_t cur = ::lseek(fd_.get(), 0, SEEK_CUR);
-            struct stat st2{};
-            if (::fstat(fd_.get(), &st2) < 0) break;
-            if (cur >= st2.st_size) break;
-
-            std::uint8_t hdr[kEntryHeaderSize];
-            ssize_t hn = read_at(fd_.get(), hdr, kEntryHeaderSize, cur);
-            if (hn < static_cast<ssize_t>(kEntryHeaderSize)) break;
-            std::uint32_t hm = 0, hs = 0;
-            std::uint64_t hsq = 0;
-            std::uint32_t al = 0, pl = 0;
-            std::memcpy(&hm, hdr + 0, 4);
-            std::memcpy(&hs, hdr + 4, 4);
-            std::memcpy(&hsq, hdr + 8, 8);
-            std::memcpy(&al, hdr + 25, 4);
-            std::memcpy(&pl, hdr + 29, 4);
-            if (hm != kFileMagic || hs != WalEntry::kSchemaVersion) break;
-            if (hsq > max_seq) max_seq = hsq;
-            ++count;
-            off_t next = cur + static_cast<off_t>(kEntryHeaderSize + al + pl);
-            if (::lseek(fd_.get(), next, SEEK_SET) < 0) break;
-        }
-    }
+    auto [max_seq, count] = scan_entries_for_max_seq();
     entry_count_.store(count, std::memory_order_relaxed);
     const std::uint64_t cur = max_seq + 1;
     next_seq_.store(cur == 0 ? 1 : cur, std::memory_order_relaxed);
@@ -299,14 +304,24 @@ core::Result<std::uint64_t> Wal::write_entry(const WalEntry& entry) noexcept {
         std::uint8_t verify[40];
         ssize_t nv = read_at(fd_.get(), verify, 40, end_off);
         if (nv == 40 && std::memcmp(verify, header, 40) != 0) {
+            // NOLINTBEGIN(cert-err33-c) - 调试输出，snprintf 截断可接受
             char dbg[512];
-            int o = std::snprintf(dbg, sizeof(dbg), "[!W] full hdr mismatch (40B):\n  file:  ");
-            for (int i = 0; i < 40; ++i) o += std::snprintf(dbg + o, sizeof(dbg) - o, "%02X ", verify[i]);
-            o += std::snprintf(dbg + o, sizeof(dbg) - o, "\n  expect:");
-            for (int i = 0; i < 40; ++i) o += std::snprintf(dbg + o, sizeof(dbg) - o, "%02X ", header[i]);
+            std::size_t o = static_cast<std::size_t>(
+                std::snprintf(dbg, sizeof(dbg), "[!W] full hdr mismatch (40B):\n  file:  "));
+            for (int i = 0; i < 40; ++i) {
+                o += static_cast<std::size_t>(
+                    std::snprintf(dbg + o, sizeof(dbg) - o, "%02X ", verify[i]));
+            }
+            o += static_cast<std::size_t>(
+                std::snprintf(dbg + o, sizeof(dbg) - o, "\n  expect:"));
+            for (int i = 0; i < 40; ++i) {
+                o += static_cast<std::size_t>(
+                    std::snprintf(dbg + o, sizeof(dbg) - o, "%02X ", header[i]));
+            }
             std::snprintf(dbg + o, sizeof(dbg) - o, "\n");
             std::fputs(dbg, stderr);
             std::fflush(stderr);
+            // NOLINTEND(cert-err33-c)
         }
     }
     if (act_len > 0) {
@@ -497,7 +512,7 @@ core::Result<std::vector<WalEntry>> Wal::replay() noexcept {
     return core::Result<std::vector<WalEntry>>::ok(std::move(out));
 }
 
-core::Result<void> Wal::replay_stream(WalCallback callback) noexcept {
+core::Result<void> Wal::replay_stream(const WalCallback& callback) noexcept {
     if (!callback) {
         return core::Result<void>::err(core::ErrorCode::INVALID_ARG);
     }
@@ -534,23 +549,27 @@ core::Result<void> Wal::truncate(std::uint64_t keep_sequence) noexcept {
     }
     std::vector<WalEntry> kept;
     std::uint64_t kept_bytes = kFileHeaderSize;
-    while (true) {
-        off_t cur = ::lseek(fd_.get(), 0, SEEK_CUR);
-        struct stat st{};
-        if (::fstat(fd_.get(), &st) < 0) {
-            return core::Result<void>::err(core::ErrorCode::INTERNAL);
-        }
-        if (cur >= st.st_size) break;
+    try {
+        while (true) {
+            off_t cur = ::lseek(fd_.get(), 0, SEEK_CUR);
+            struct stat st{};
+            if (::fstat(fd_.get(), &st) < 0) {
+                return core::Result<void>::err(core::ErrorCode::INTERNAL);
+            }
+            if (cur >= st.st_size) break;
 
-        auto r = read_entry();
-        if (r.is_err()) {
-            return core::Result<void>::err(r.error());
+            auto r = read_entry();
+            if (r.is_err()) {
+                return core::Result<void>::err(r.error());
+            }
+            WalEntry e = std::move(r).value();
+            if (e.seq_ >= keep_sequence) {
+                kept_bytes += kEntryHeaderSize + e.action_.size() + e.payload_.size();
+                kept.push_back(std::move(e));
+            }
         }
-        const auto& e = r.value();
-        if (e.seq_ >= keep_sequence) {
-            kept_bytes += kEntryHeaderSize + e.action_.size() + e.payload_.size();
-            kept.push_back(std::move(e));
-        }
+    } catch (const std::exception&) {
+        return core::Result<void>::err(core::ErrorCode::INTERNAL);
     }
 
     if (kept.empty()) {

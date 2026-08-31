@@ -21,6 +21,84 @@ std::string to_lower(std::string_view s) {
     return out;
 }
 
+// 顶层字段：node_id / node_role / schema_version
+// 内部 try/catch 用于吞咽 yaml-cpp 的 YAML::Exception，保持 noexcept 契约
+Result<void> apply_top_level(const YAML::Node& root, Config& cfg) noexcept {
+    try {
+        if (root["node_id"])      cfg.node_id = root["node_id"].as<std::string>();
+        if (root["node_role"])    cfg.node_role = root["node_role"].as<std::string>();
+        if (root["schema_version"]) {
+            cfg.schema_version = root["schema_version"].as<std::uint32_t>();
+        }
+    } catch (const YAML::Exception&) {
+        return Result<void>::err(ErrorCode::CONFIG_INVALID_VALUE);
+    }
+    return Result<void>::ok();
+}
+
+// net 子表
+Result<void> apply_net_section(const YAML::Node& n, NetConfig& net) noexcept {
+    try {
+        if (n["bind_address"])            net.bind_address = n["bind_address"].as<std::string>();
+        if (n["bind_port"])               net.bind_port = n["bind_port"].as<std::uint16_t>();
+        if (n["heartbeat_interval_ms"])   net.heartbeat_interval_ms = n["heartbeat_interval_ms"].as<std::uint32_t>();
+        if (n["discovery_interval_sec"])  net.discovery_interval_sec = n["discovery_interval_sec"].as<std::uint32_t>();
+    } catch (const YAML::Exception&) {
+        return Result<void>::err(ErrorCode::CONFIG_INVALID_VALUE);
+    }
+    return Result<void>::ok();
+}
+
+// log 子表
+Result<void> apply_log_section(const YAML::Node& l, LogConfig& log_cfg) noexcept {
+    try {
+        if (l["level"])              log_cfg.level = l["level"].as<std::string>();
+        if (l["to_file"])            log_cfg.to_file = l["to_file"].as<bool>();
+        if (l["file_path"])          log_cfg.file_path = l["file_path"].as<std::string>();
+        if (l["max_file_size"])      log_cfg.max_file_size_bytes = l["max_file_size"].as<std::uint64_t>();
+        if (l["max_rotated_files"])  log_cfg.max_rotated_files = l["max_rotated_files"].as<std::uint32_t>();
+    } catch (const YAML::Exception&) {
+        return Result<void>::err(ErrorCode::CONFIG_INVALID_VALUE);
+    }
+    return Result<void>::ok();
+}
+
+// crypto 子表
+Result<void> apply_crypto_section(const YAML::Node& c, CryptoConfig& crypto) noexcept {
+    try {
+        if (c["mode"]) {
+            auto mode = parse_network_mode(c["mode"].as<std::string>());
+            if (!mode) {
+                Logger::instance().log_with_error(
+                    LogLevel::Error, "crypto.mode invalid", ErrorCode::CONFIG_INVALID_VALUE);
+                return Result<void>::err(ErrorCode::CONFIG_INVALID_VALUE);
+            }
+            crypto.mode = *mode;
+        }
+        if (c["psk_path"])   crypto.psk_path = c["psk_path"].as<std::string>();
+        if (c["cert_path"])  crypto.cert_path = c["cert_path"].as<std::string>();
+        if (c["key_path"])   crypto.key_path = c["key_path"].as<std::string>();
+        if (c["ca_path"])    crypto.ca_path = c["ca_path"].as<std::string>();
+    } catch (const YAML::Exception&) {
+        return Result<void>::err(ErrorCode::CONFIG_INVALID_VALUE);
+    }
+    return Result<void>::ok();
+}
+
+// peer_whitelist（数组）
+Result<void> apply_whitelist(const YAML::Node& root, std::vector<std::string>& list) noexcept {
+    try {
+        if (root["peer_whitelist"] && root["peer_whitelist"].IsSequence()) {
+            for (const auto& item : root["peer_whitelist"]) {
+                list.push_back(item.as<std::string>());
+            }
+        }
+    } catch (const YAML::Exception&) {
+        return Result<void>::err(ErrorCode::CONFIG_INVALID_VALUE);
+    }
+    return Result<void>::ok();
+}
+
 }  // namespace
 
 std::optional<NetworkMode> parse_network_mode(std::string_view s) noexcept {
@@ -50,12 +128,12 @@ std::optional<LogLevel> parse_log_level(std::string_view s) noexcept {
     return std::nullopt;
 }
 
-Result<Config> ConfigLoader::load_from_string(const std::string& yaml_content) const noexcept {
+Result<Config> ConfigLoader::load_from_string(const std::string& yaml_content) noexcept {
     Config cfg;
     YAML::Node root;
     try {
         root = YAML::Load(yaml_content);
-    } catch (const YAML::Exception& e) {
+    } catch (const YAML::Exception& /*e*/) {
         Logger::instance().log_with_error(
             LogLevel::Error, "yaml parse failed", ErrorCode::CONFIG_PARSE_FAILED);
         return Result<Config>::err(ErrorCode::CONFIG_PARSE_FAILED);
@@ -66,57 +144,28 @@ Result<Config> ConfigLoader::load_from_string(const std::string& yaml_content) c
     }
 
     try {
-        // 顶层字段
-        if (root["node_id"])      cfg.node_id = root["node_id"].as<std::string>();
-        if (root["node_role"])    cfg.node_role = root["node_role"].as<std::string>();
-        if (root["schema_version"]) {
-            cfg.schema_version = root["schema_version"].as<std::uint32_t>();
+        if (auto r = apply_top_level(root, cfg); r.is_err()) {
+            return Result<Config>::err(r.error());
         }
-
-        // net 子表
         if (root["net"]) {
-            const auto& n = root["net"];
-            if (n["bind_address"])            cfg.net.bind_address = n["bind_address"].as<std::string>();
-            if (n["bind_port"])               cfg.net.bind_port = n["bind_port"].as<std::uint16_t>();
-            if (n["heartbeat_interval_ms"])   cfg.net.heartbeat_interval_ms = n["heartbeat_interval_ms"].as<std::uint32_t>();
-            if (n["discovery_interval_sec"])  cfg.net.discovery_interval_sec = n["discovery_interval_sec"].as<std::uint32_t>();
+            if (auto r = apply_net_section(root["net"], cfg.net); r.is_err()) {
+                return Result<Config>::err(r.error());
+            }
         }
-
-        // log 子表
         if (root["log"]) {
-            const auto& l = root["log"];
-            if (l["level"])              cfg.log.level = l["level"].as<std::string>();
-            if (l["to_file"])            cfg.log.to_file = l["to_file"].as<bool>();
-            if (l["file_path"])          cfg.log.file_path = l["file_path"].as<std::string>();
-            if (l["max_file_size"])      cfg.log.max_file_size_bytes = l["max_file_size"].as<std::uint64_t>();
-            if (l["max_rotated_files"])  cfg.log.max_rotated_files = l["max_rotated_files"].as<std::uint32_t>();
+            if (auto r = apply_log_section(root["log"], cfg.log); r.is_err()) {
+                return Result<Config>::err(r.error());
+            }
         }
-
-        // crypto 子表
         if (root["crypto"]) {
-            const auto& c = root["crypto"];
-            if (c["mode"]) {
-                auto mode = parse_network_mode(c["mode"].as<std::string>());
-                if (!mode) {
-                    Logger::instance().log_with_error(
-                        LogLevel::Error, "crypto.mode invalid", ErrorCode::CONFIG_INVALID_VALUE);
-                    return Result<Config>::err(ErrorCode::CONFIG_INVALID_VALUE);
-                }
-                cfg.crypto.mode = *mode;
-            }
-            if (c["psk_path"])   cfg.crypto.psk_path = c["psk_path"].as<std::string>();
-            if (c["cert_path"])  cfg.crypto.cert_path = c["cert_path"].as<std::string>();
-            if (c["key_path"])   cfg.crypto.key_path = c["key_path"].as<std::string>();
-            if (c["ca_path"])    cfg.crypto.ca_path = c["ca_path"].as<std::string>();
-        }
-
-        // peer_whitelist（数组）
-        if (root["peer_whitelist"] && root["peer_whitelist"].IsSequence()) {
-            for (const auto& item : root["peer_whitelist"]) {
-                cfg.peer_whitelist.push_back(item.as<std::string>());
+            if (auto r = apply_crypto_section(root["crypto"], cfg.crypto); r.is_err()) {
+                return Result<Config>::err(r.error());
             }
         }
-    } catch (const YAML::Exception& e) {
+        if (auto r = apply_whitelist(root, cfg.peer_whitelist); r.is_err()) {
+            return Result<Config>::err(r.error());
+        }
+    } catch (const YAML::Exception& /*e*/) {
         Logger::instance().log_with_error(
             LogLevel::Error, "yaml field extract failed", ErrorCode::CONFIG_INVALID_VALUE);
         return Result<Config>::err(ErrorCode::CONFIG_INVALID_VALUE);
@@ -130,7 +179,7 @@ Result<Config> ConfigLoader::load_from_string(const std::string& yaml_content) c
     return Result<Config>::ok(std::move(cfg));
 }
 
-Result<Config> ConfigLoader::load_from_file(const std::string& file_path) const noexcept {
+Result<Config> ConfigLoader::load_from_file(const std::string& file_path) noexcept {
     std::ifstream ifs(file_path);
     if (!ifs.is_open()) {
         Logger::instance().log_with_error(
@@ -142,7 +191,7 @@ Result<Config> ConfigLoader::load_from_file(const std::string& file_path) const 
     return load_from_string(ss.str());
 }
 
-Result<void> ConfigLoader::validate(const Config& cfg) const noexcept {
+Result<void> ConfigLoader::validate(const Config& cfg) noexcept {
     if (cfg.node_id.empty()) {
         return Result<void>::err(ErrorCode::CONFIG_MISSING_REQUIRED);
     }

@@ -10,6 +10,9 @@ InprocChannel::InprocChannel(std::size_t capacity_per_priority) noexcept
     : capacity_(capacity_per_priority) {}
 
 InprocChannel::~InprocChannel() {
+    // NOLINTNEXTLINE(clang-analyzer-optin.cplusplus.VirtualCall)
+    // 析构阶段调用 close() 是有意为之（基类析构前必须先关闭队列）。
+    // 虚分派在此处按值进行是安全的，因为 InprocChannel 已是最末派生类。
     close();
 }
 

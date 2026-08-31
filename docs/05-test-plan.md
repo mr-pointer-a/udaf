@@ -1,10 +1,10 @@
 # 05 测试方案
 
 > **项目代号**：UDAF（Unified Device & Application Framework，统一设备与应用框架）
-> **文档版本**：v0.8
+> **文档版本**：v0.9
 > **日期**：2026-09-01
 > **阶段**：阶段 5 / 5（测试方案）
-> **前置文档**：[`docs/01-requirements.md`](01-requirements.md) v1.0、[`docs/02-architecture.md`](02-architecture.md) v2.9、[`docs/03-detailed-design.md`](03-detailed-design.md) v2.2、[`docs/04-module-design.md`](04-module-design.md) v0.8
+> **前置文档**：[`docs/01-requirements.md`](01-requirements.md) v1.0、[`docs/02-architecture.md`](02-architecture.md) v2.10、[`docs/03-detailed-design.md`](03-detailed-design.md) v2.3、[`docs/04-module-design.md`](04-module-design.md) v0.9
 > **状态**：草案
 
 ---
@@ -1008,7 +1008,7 @@ abidiff previous.so current.so --no-show-locs
 | OpenSSL 3.0 与部分 aarch64 工具链不兼容 | 设备端构建失败 | 明确支持的工具链版本清单 |
 | 性能基准回归容差缺失 | 偶发抖动阻塞 CI | 软阈值 ×1.2 + 硬阈值 ×1.5 |
 | 编译产物未传递导致下游 job 失败 | CI 流水线中断 | Round 4 修复：upload-artifact + download-artifact |
-| 文档版本号引用不一致 | 评审/实现混乱 | 统一 02 v2.8 / 03 v2.1 / 04 v0.7 / 05 v0.7 |
+| 文档版本号引用不一致 | 评审/实现混乱 | 统一 02 v2.10 / 03 v2.3 / 04 v0.9 / 05 v0.9 |
 | 03/04 模块设计尚未完全对齐 05 测试场景 | 测试代码无法落地 | v0.6 已部分同步，剩余待实现阶段 |
 | 性能基准数量 02/03（33 项）vs 05（33 项）已对齐 | 跨文档引用断裂 | ✅ v0.8 已修复：02 §3.4 + 03 §11.2 补齐 #30~#33（aead_throughput_1mb / audit_verify_chain / wal_replay_full / topology_commit_50），三文档全部 33 项 |
 
@@ -1330,3 +1330,4 @@ jobs:
 | v0.6 | 2026-08-28 | **Round 5 评审修复 + 类型/命名空间对齐 03/04**：①Critical 修复：CI YAML `coverage` job 补充 `download-artifact`（v0.5 修复后回归遗漏）。②命名空间修正：`udaf::Client` → `udaf::sdk::Client`（§5.4.2，对齐03 §1.3/§3.5.1）；`udaf::Client` 成员声明同步。③类型修正：`ServiceEntry` → `RegistryEntry`（§5.4.5/§5.7.2，对齐03 §2.3.2），字段名补尾下划线（`.node_id_`/`.bind_address_`/`.bind_port_`）。④序列化类型修正：`ProtocolSerializer` + `MessageEnvelope` 不存在03（03 §3.3.7 用 `SerializerBase` + `Serializer<T>`），§5.3.1 测试文件 `test_protocol_serializer.cc` → `test_serializer.cc`、§5.3.0/§5.3.1.1 引用同步、§5.6.2 模糊测试改用 `SerializerBase::decode_raw`。⑤§5.3.1 udaf::core 头部数量同步（10 文件/~50 用例 → 8 文件/~38 用例，对齐实际表格）。⑥§5.5.3.8 audit_write_throughput 值回退到 ≥ 1000 条/秒（v0.5 误改 10000 未核对02 原文）。⑦已知问题登记：性能基准数量 02/03（24 项）vs 05（29 项）仍不一致，待 v0.7 统一。 |
 | v0.7 | 2026-08-28 | **Round 6 性能契约对齐 02/03**：①02 §3.4 性能契约表 24→29 项（新增 #25 命令往返延迟 P99 < 15ms / #26 加密吞吐损失 < 20% / #27 审计写入吞吐 ≥ 1000 条/秒 / #28 设备端峰值内存 < 16MB / #29 主机端峰值内存 < 128MB），版本升 v2.7 → v2.8。②03 §11 性能契约 24→29 项，版本升 v2.0 → v2.1。③04 前置引用同步（02 v2.8 + 03 v2.1）。④05 头部前置引用同步（02 v2.8 + 03 v2.1）。⑤§5.14 风险表已知问题关闭：性能基准数量 02/03/05 三方全部 29 项，已对齐。⑥§5.14 风险表版本号引用更新：02 v2.8 / 03 v2.1 / 04 v0.7 / 05 v0.7。 |
 | v0.8 | 2026-09-01 | **Round 7 性能契约对齐 v0.3.13 实现新增 4 项**：①02 §3.4 性能契约表 29→33 项（新增 #30 AEAD 大块吞吐 / #31 审计链校验 / #32 WAL 完整 replay / #33 拓扑事务批量 commit），版本升 v2.8 → v2.9。②03 §11 性能契约 29→33 项，版本升 v2.1 → v2.2。③04 前置引用同步（02 v2.9 + 03 v2.2），版本升 v0.7 → v0.8。④05 头部前置引用同步（02 v2.9 + 03 v2.2 + 04 v0.8），§5.5.1 表追加 #30~#33。⑤§5.14 风险表已知问题关闭：性能基准数量 02/03/04/05 四方全部 33 项，已对齐。⑥§5.14 风险表版本号引用更新：02 v2.9 / 03 v2.2 / 04 v0.8 / 05 v0.8。 |
+| v0.9 | 2026-09-01 | **ADR 索引同步**：架构文档附录 B 升级（新增"状态"+"关键决策"列），ADR-001~010 状态批量更新为"已批准"；架构版本升 v2.9 → v2.10；头部前置引用同步；§5.14 风险表版本号引用更新（02 v2.10） |

@@ -35,10 +35,11 @@ struct AdvertiserConfig {
 class Advertiser {
 public:
     /// @param payload 待广播内容（明文）
+    /// @param cfg 广播配置（bind 地址/端口/周期）
     /// @param psk 可选 PSK（32B）用于加密 payload
     static std::unique_ptr<Advertiser>
     create(AdvertisementPayload payload,
-           AdvertiserConfig cfg,
+           const AdvertiserConfig& cfg,
            std::span<const std::uint8_t> psk = {}) noexcept;
 
     ~Advertiser();

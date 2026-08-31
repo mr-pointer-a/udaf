@@ -453,3 +453,160 @@ TEST_F(WalTest, ReplayStreamNullCallback) {
     EXPECT_TRUE(r.is_err());
     EXPECT_EQ(r.error(), udaf::core::ErrorCode::INVALID_ARG);
 }
+// ===== 覆盖率补充（v0.3.14）=====
+
+// partial header：文件长度 < kFileHeaderSize → next_seq 应从 1 开始
+TEST_F(WalTest, PartialHeaderResetsSequence) {
+    // 1) 写入合法 wal 一次，让 create() 落盘 header
+    {
+        auto wr = Wal::create(default_cfg());
+        ASSERT_TRUE(wr.is_ok());
+        ASSERT_TRUE(wr.value()->append(WalEntryType::ADD_NODE,
+                                        "init", make_payload(4)).is_ok());
+    }
+    // 2) truncate 文件到 4 字节（header 8 字节的前一半）
+    {
+        int fd = ::open(path_.string().c_str(), O_RDWR);
+        ASSERT_GE(fd, 0);
+        ASSERT_EQ(::ftruncate(fd, 4), 0);
+        ::close(fd);
+    }
+    // 3) 重新 open：read_file_header 应走"短读"分支（n < kFileHeaderSize），
+    //    next_seq_=1，create 返回 Ok
+    auto wr2 = Wal::create(default_cfg());
+    ASSERT_TRUE(wr2.is_ok());
+    EXPECT_EQ(wr2.value()->current_sequence(), 1u);
+
+    // 4) append 应从 seq=1 开始
+    auto r = wr2.value()->append(WalEntryType::ADD_NODE, "x", make_payload(2));
+    ASSERT_TRUE(r.is_ok());
+    EXPECT_EQ(r.value(), 1u);
+}
+
+// magic 不匹配（offset 0..3）→ SERIALIZE_VERSION_MISMATCH
+TEST_F(WalTest, BadMagicReturnsVersionMismatch) {
+    {
+        auto wr = Wal::create(default_cfg());
+        ASSERT_TRUE(wr.is_ok());
+    }
+    int fd = ::open(path_.string().c_str(), O_RDWR);
+    ASSERT_GE(fd, 0);
+    std::uint32_t bad_magic = 0x00000000;  // 必然不等于 kFileMagic
+    ssize_t n = ::pwrite(fd, &bad_magic, 4, 0);
+    EXPECT_EQ(n, 4);
+    ::close(fd);
+
+    auto wr2 = Wal::create(default_cfg());
+    EXPECT_TRUE(wr2.is_err());
+    EXPECT_EQ(wr2.error(), ErrorCode::SERIALIZE_VERSION_MISMATCH);
+}
+
+// truncate_all 后重开 → header 保留 + 通过扫描 entries 重建 next_seq
+// （文件已 truncate 到仅 header，故扫描到 0 条 entry → next_seq=1）
+TEST_F(WalTest, TruncateAllThenReopenRebuildsSequence) {
+    {
+        auto wr = Wal::create(default_cfg());
+        ASSERT_TRUE(wr.is_ok());
+        auto& wal = wr.value();
+        ASSERT_TRUE(wal->append(WalEntryType::ADD_NODE, "a", make_payload(2)).is_ok());
+        ASSERT_TRUE(wal->append(WalEntryType::ADD_NODE, "b", make_payload(2)).is_ok());
+        ASSERT_TRUE(wal->truncate_all().is_ok());
+        EXPECT_EQ(wal->size_bytes(), Wal::kFileHeaderSize);
+    }
+    auto wr2 = Wal::create(default_cfg());
+    ASSERT_TRUE(wr2.is_ok());
+    // 重开后从 1 重新开始（entries 已被 truncate）
+    EXPECT_EQ(wr2.value()->current_sequence(), 1u);
+    auto r = wr2.value()->append(WalEntryType::ADD_NODE, "c", make_payload(2));
+    ASSERT_TRUE(r.is_ok());
+    EXPECT_EQ(r.value(), 1u);
+}
+
+// replay_stream 在文件为空（仅 header）时 → callback 不被调用，Ok
+TEST_F(WalTest, ReplayStreamOnlyHeader) {
+    auto wr = Wal::create(default_cfg());
+    ASSERT_TRUE(wr.is_ok());
+    int called = 0;
+    auto r = wr.value()->replay_stream([&](const WalEntry&) {
+        ++called;
+        return true;
+    });
+    EXPECT_TRUE(r.is_ok());
+    EXPECT_EQ(called, 0);
+}
+
+// replay_stream 返回 false → replay 提前终止，Ok（剩余条目不再投递）
+TEST_F(WalTest, ReplayStreamEarlyStop) {
+    auto wr = Wal::create(default_cfg());
+    ASSERT_TRUE(wr.is_ok());
+    auto& wal = wr.value();
+    for (int i = 0; i < 10; ++i) {
+        ASSERT_TRUE(wal->append(WalEntryType::ADD_NODE,
+                                "n" + std::to_string(i), make_payload(2)).is_ok());
+    }
+    int called = 0;
+    auto r = wal->replay_stream([&](const WalEntry& e) {
+        ++called;
+        if (e.seq_ >= 3u) return false;  // 提前终止
+        return true;
+    });
+    EXPECT_TRUE(r.is_ok());
+    EXPECT_EQ(called, 3);
+}
+
+// 覆盖 wal.cpp:556-564 truncate(keep > all_seq) → kept 为空 → 截断为只有 header
+TEST_F(WalTest, TruncateKeepSequenceBeyondAllTruncatesHeaderOnly) {
+    auto wr = Wal::create(default_cfg());
+    ASSERT_TRUE(wr.is_ok());
+    auto& wal = *wr.value();
+    std::vector<std::uint8_t> payload(8, 0xAA);
+    ASSERT_TRUE(wal.append(WalEntryType::ADD_NODE, "a", payload).is_ok());
+    ASSERT_TRUE(wal.append(WalEntryType::ADD_NODE, "b", payload).is_ok());
+    ASSERT_TRUE(wal.append(WalEntryType::ADD_NODE, "c", payload).is_ok());
+
+    // keep_sequence=10 > 所有 entry.seq_（≤3）→ kept.empty() 分支
+    auto t = wal.truncate(10);
+    ASSERT_TRUE(t.is_ok());
+    EXPECT_EQ(wal.entry_count(), 0u);
+    EXPECT_EQ(wal.size_bytes(), static_cast<std::uint64_t>(Wal::kFileHeaderSize));
+}
+
+// 覆盖 wal.cpp:157-158 read_file_header 文件头小于 kFileHeaderSize → next_seq=1
+TEST_F(WalTest, ReopenTruncatedHeaderDefaultsToSeq1) {
+    // 先创建一次（写完整 header）
+    {
+        auto wr = Wal::create(default_cfg());
+        ASSERT_TRUE(wr.is_ok());
+    }
+    // 截断文件到 5 字节
+    {
+        int fd = ::open(path_.string().c_str(), O_RDWR);
+        ASSERT_GE(fd, 0);
+        ASSERT_EQ(::ftruncate(fd, 5), 0);
+        ::close(fd);
+    }
+    // 重新打开应成功，next_seq 默认 = 1
+    auto wr = Wal::create(default_cfg());
+    ASSERT_TRUE(wr.is_ok());
+    EXPECT_EQ(wr.value()->current_sequence(), 1u);
+}
+
+// 覆盖 wal.cpp:166-170 magic 不匹配 → SERIALIZE_VERSION_MISMATCH
+TEST_F(WalTest, ReopenWithBadMagicReturnsErr) {
+    {
+        auto wr = Wal::create(default_cfg());
+        ASSERT_TRUE(wr.is_ok());
+    }
+    // 改写前 4 字节为错误 magic
+    {
+        int fd = ::open(path_.string().c_str(), O_RDWR);
+        ASSERT_GE(fd, 0);
+        std::uint32_t bad_magic = 0xDEADC0DE;
+        ssize_t n = ::pwrite(fd, &bad_magic, 4, 0);
+        EXPECT_EQ(n, 4);
+        ::close(fd);
+    }
+    auto wr = Wal::create(default_cfg());
+    EXPECT_TRUE(wr.is_err());
+    EXPECT_EQ(wr.error(), ErrorCode::SERIALIZE_VERSION_MISMATCH);
+}

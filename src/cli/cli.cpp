@@ -87,7 +87,7 @@ int cmd_run(const std::vector<std::string>& args) {
     }
     auto* client = current_client();
     if (!client) return udaf::cli::kInternal;
-    std::string node_id = args[1];
+    const std::string& node_id = args[1];
     // 解析 -- <cmd> <args>
     if (args[2] != "--") {
         std::cerr << "udaf run: 期望 '--' 分隔" << std::endl;
@@ -97,7 +97,7 @@ int cmd_run(const std::vector<std::string>& args) {
         std::cerr << "udaf run: 缺少命令" << std::endl;
         return udaf::cli::kUsage;
     }
-    std::string command = args[3];
+    const std::string& command = args[3];
     std::vector<std::string> cmd_args(args.begin() + 4, args.end());
     auto r = client->run_remote(node_id, command, cmd_args);
     if (r.is_err()) {

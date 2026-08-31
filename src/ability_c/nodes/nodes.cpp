@@ -20,7 +20,12 @@ CmdExecNode::CmdExecNode()
     outputs_.push_back(out_result_.info());
 }
 
-CmdExecNode::~CmdExecNode() { stop(); }
+CmdExecNode::~CmdExecNode() {
+    // NOLINTNEXTLINE(clang-analyzer-optin.cplusplus.VirtualCall)
+    // 析构阶段调用 stop() 是有意为之（基类析构前必须先停止 worker_ 线程）。
+    // 虚分派在此处按值进行是安全的，因为 CmdExecNode 已是最末派生类。
+    (void)stop();
+}
 
 void CmdExecNode::set_allowed_executables(std::vector<std::string> a) noexcept {
     allowed_ = std::move(a);
@@ -59,25 +64,31 @@ core::Result<void> CmdExecNode::reload() noexcept {
 
 void CmdExecNode::worker() noexcept {
     while (running_.load()) {
-        auto r = in_cmd_.recv(100);
-        if (r.is_err()) continue;
-        const auto& req = r.value();
-        executor::ProcessExecutor::Options opts;
-        opts.executable = req.command;
-        opts.args = req.args;
-        opts.allowed_executables = allowed_;
-        auto er = executor::ProcessExecutor::execute(opts);
-        messages::CmdResult res;
-        if (er.is_ok()) {
-            res.exit_code = er.value().exit_code;
-            res.stdout_text = std::move(er.value().stdout_text);
-            res.stderr_text = std::move(er.value().stderr_text);
-            res.elapsed_ns = er.value().elapsed_ns;
-        } else {
-            res.exit_code = -1;
-            res.stderr_text = "exec failed";
+        try {
+            auto r = in_cmd_.recv(100);
+            if (r.is_err()) continue;
+            const auto& req = r.value();
+            executor::ProcessExecutor::Options opts;
+            opts.executable = req.command;
+            opts.args = req.args;
+            opts.allowed_executables = allowed_;
+            auto er = executor::ProcessExecutor::execute(opts);
+            messages::CmdResult res;
+            if (er.is_ok()) {
+                res.exit_code = er.value().exit_code;
+                res.stdout_text = std::move(er.value().stdout_text);
+                res.stderr_text = std::move(er.value().stderr_text);
+                res.elapsed_ns = er.value().elapsed_ns;
+            } else {
+                res.exit_code = -1;
+                res.stderr_text = "exec failed";
+            }
+            (void)out_result_.try_send(std::move(res));
+        } catch (const std::exception& /*e*/) {
+            // NOLINT(bugprone-empty-catch)
+            // 任何 STL/系统异常均吞掉（worker 线程不应终止）
+            (void)0;
         }
-        (void)out_result_.try_send(std::move(res));
     }
 }
 

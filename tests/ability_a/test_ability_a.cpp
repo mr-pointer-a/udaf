@@ -324,6 +324,28 @@ TEST(UdafTransport, UnicastRateLimit) {
     EXPECT_EQ(limited, 5);
 }
 
+// 覆盖 udp_socket.cpp:103 限流历史条目过期后清理
+TEST(UdafTransport, UnicastRateLimitEvictsExpiredEntries) {
+    auto s = UdpSocket::create(0);
+    ASSERT_TRUE(s.is_ok());
+    auto dst = Endpoint{"127.0.0.1", 19997, false};
+    std::vector<std::uint8_t> msg{1};
+
+    // 5/s 限流
+    for (int i = 0; i < 5; ++i) {
+        ASSERT_TRUE(s.value()->send(msg, dst).is_ok());
+    }
+    // 第 6 次立即应被限流
+    EXPECT_EQ(s.value()->send(msg, dst).error(), ErrorCode::NET_RATE_LIMITED);
+
+    // 等待 1.1s 让历史条目过期（覆盖 hist.erase 分支）
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+
+    // 现在应能再次发送
+    auto r = s.value()->send(msg, dst);
+    EXPECT_TRUE(r.is_ok()) << "1s 后限流历史应清空，error=" << static_cast<int>(r.error());
+}
+
 TEST(UdafTransport, BroadcastRateLimit) {
     auto s = UdpSocket::create(0);
     ASSERT_TRUE(s.is_ok());

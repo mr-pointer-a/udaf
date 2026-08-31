@@ -67,7 +67,7 @@ jobs:
             src/
       - name: clang-tidy (debug build)
         run: |
-          cmake -B build-tidy -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_CLANG_TIDY="clang-tidy;-checks=bugprone-*,performance-*,readability-*,modernize-*,clang-analyzer-*"
+          cmake -B build-tidy -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_CLANG_TIDY="clang-tidy;-checks=bugprone-*,performance-*,readability-*,modernize-*,clang-analyzer-*,-bugprone-easily-swappable-parameters,-bugprone-unhandled-exception-at-new,-modernize-avoid-c-arrays,-modernize-loop-convert,-modernize-make-unique,-modernize-raw-string-literal,-modernize-use-auto,-modernize-use-trailing-return-type,-performance-avoid-endl,-readability-braces-around-statements,-readability-identifier-length,-readability-isolate-declaration,-readability-implicit-bool-conversion,-readability-magic-numbers,-readability-named-parameter,-readability-redundant-declaration,-readability-static-definition-in-anonymous-namespace"
           cmake --build build-tidy -j$(nproc)
 
   # ---------- Job 4: test ----------

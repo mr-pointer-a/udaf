@@ -10,6 +10,7 @@
 #ifndef UDAF_CLI_MAIN_HPP
 #define UDAF_CLI_MAIN_HPP
 
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -17,7 +18,7 @@
 namespace udaf::cli {
 
 // 退出码（ADR-010 §3.4）
-enum ExitCode : int {
+enum ExitCode : std::uint8_t {
     kOk             = 0,
     kUsage          = 1,
     kUnknownCmd     = 2,

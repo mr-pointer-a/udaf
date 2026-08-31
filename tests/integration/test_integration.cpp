@@ -24,6 +24,8 @@
 #include <array>
 #include <chrono>
 #include <condition_variable>
+#include <fstream>
+#include <iterator>
 #include <mutex>
 #include <thread>
 
@@ -289,7 +291,10 @@ TEST(Integration_S10_7, WhitelistRejectionOnUntrustedNode) {
 }
 
 // ============ #S10_8 审计 hash chain 写入与回放校验 ============
-// 验证：写入 N 条事件 → 重新打开 AuditLogger → verify_chain() 应返回 true
+// 验证：
+//   1) 写入 N 条事件 → 重开 logger → sequence() 应等于 N
+//   2) verify_chain() 全链校验应返回 Ok(true)
+//   3) 篡改文件中任一字节 → verify_chain() 应返回 Ok(false)
 TEST(Integration_S10_8, AuditChainWriteAndVerify) {
     using udaf::audit::AuditLogger;
     using udaf::audit::ActionType;
@@ -311,19 +316,57 @@ TEST(Integration_S10_8, AuditChainWriteAndVerify) {
             ASSERT_TRUE(r.is_ok());
         }
         EXPECT_EQ(logger.sequence(), 100u);
-        // 文件应已被创建且非空
         EXPECT_TRUE(std::filesystem::exists(path));
         EXPECT_GT(std::filesystem::file_size(path), 0u);
     }
 
-    // 阶段 2：重开 logger → verify_chain 全链校验
-    // 注：sequence() 不从文件 reload（按设计，仅 in-memory 跟踪）；
-    // verify_chain() 读取整个文件验证 hash 链接性
+    // 阶段 2：重开 logger → sequence() 从文件恢复 + verify_chain() 全链校验
     {
         AuditLogger logger2(path.string());
+        EXPECT_EQ(logger2.sequence(), 100u)
+            << "构造时应从文件末尾回填 seq_（v0.3.14 实装）";
+
+        // 再追加 1 条 → seq 应递增到 101
+        auto r = logger2.append(ActionType::ConfigChange,
+                                 "actor-X", "target-Y", "{\"k\":\"v\"}");
+        ASSERT_TRUE(r.is_ok());
+        EXPECT_EQ(logger2.sequence(), 101u);
+
+        // verify_chain 全链校验
         auto v = logger2.verify_chain();
         ASSERT_TRUE(v.is_ok());
         EXPECT_TRUE(v.value());
+    }
+
+    // 阶段 3：篡改文件中第 50 条事件的 json 字段 → verify_chain 应返回 Ok(false)
+    {
+        std::ifstream in(path.string(), std::ios::binary);
+        std::string content((std::istreambuf_iterator<char>(in)),
+                            std::istreambuf_iterator<char>());
+        in.close();
+        // 找第 50 条事件起始（跳过 GENESIS 行 + 50 个 '\n'）
+        std::size_t event_start = 0;
+        int nl_seen = 0;
+        for (std::size_t i = 0; i < content.size() && nl_seen < 50; ++i) {
+            if (content[i] == '\n') {
+                ++nl_seen;
+                event_start = i + 1;
+            }
+        }
+        ASSERT_LT(event_start, content.size()) << "应能找到第 50 条事件";
+        // 在 json 尾段（最后一个 '|' 之后）翻转一个字符
+        std::size_t last_pipe = content.rfind('|');
+        ASSERT_NE(last_pipe, std::string::npos);
+        ASSERT_GT(last_pipe, event_start);
+        content[last_pipe + 1] = (content[last_pipe + 1] == 'X') ? 'Y' : 'X';
+        std::ofstream out(path.string(), std::ios::binary | std::ios::trunc);
+        out << content;
+        out.close();
+
+        AuditLogger logger3(path.string());
+        auto v = logger3.verify_chain();
+        ASSERT_TRUE(v.is_ok());
+        EXPECT_FALSE(v.value()) << "篡改后 verify_chain 必须返回 false";
     }
     std::filesystem::remove(path, ec);
 }

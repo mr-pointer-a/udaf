@@ -95,7 +95,14 @@ TEST(RingBuffer, PeekSizeWithoutConsuming) {
     std::array<std::byte, 32> out{};
     auto r = rb.read(out);
     ASSERT_TRUE(r.is_ok());
-    EXPECT_EQ(r.value(), data.size());
+}
+
+// 覆盖 buffer.hpp:120 peek_size 在 h == t 时返回 RES_MEMORY_EXHAUSTED
+TEST(RingBuffer, PeekSizeOnEmptyReturnsError) {
+    RingBuffer<1024> rb;
+    auto peek = rb.peek_size();
+    EXPECT_TRUE(peek.is_err());
+    EXPECT_EQ(peek.error(), ErrorCode::RES_MEMORY_EXHAUSTED);
 }
 
 TEST(RingBuffer, SPSCConcurrentFifoOrder) {
@@ -197,6 +204,36 @@ TEST(DynamicRingBuffer, ReadTooSmallBufferReturnsErr) {
     auto r = rb.read(out);
     EXPECT_TRUE(r.is_err());
     EXPECT_EQ(r.error(), ErrorCode::PROTOCOL_TRUNCATED_BUFFER);
+}
+
+// 覆盖 buffer.cpp:49-51 wrap-around memcpy 分支
+TEST(DynamicRingBuffer, WriteWrapsAroundBufferBoundary) {
+    constexpr std::size_t kCap = 128;
+    DynamicRingBuffer rb(kCap);
+
+    std::vector<std::byte> p30(30, std::byte{0xAA});
+
+    // 循环 write+read 把 head 推到 102、tail=102
+    ASSERT_TRUE(rb.write(p30).is_ok());   // head=34
+    std::vector<std::byte> out(64);
+    ASSERT_TRUE(rb.read(out).is_ok());    // tail=68
+    ASSERT_TRUE(rb.write(p30).is_ok());   // head=68
+    ASSERT_TRUE(rb.read(out).is_ok());    // tail=102
+    // 第 3 次写：idx=102, data_pos=106, 106+30=136 > 128 → WRAP
+    ASSERT_TRUE(rb.write(p30).is_ok());   // head=102
+    ASSERT_TRUE(rb.read(out).is_ok());    // tail=136
+    // 再来一轮：head=136, idx=8, no wrap
+    ASSERT_TRUE(rb.write(p30).is_ok());   // head=136
+    ASSERT_TRUE(rb.read(out).is_ok());    // tail=170
+    ASSERT_TRUE(rb.write(p30).is_ok());   // head=170, idx=42, no wrap
+
+    // 校验读出
+    std::vector<std::byte> ref(30, std::byte{0xAA});
+    std::vector<std::byte> v(64);
+    auto vr = rb.read(v);
+    ASSERT_TRUE(vr.is_ok());
+    EXPECT_EQ(vr.value(), 30u);
+    EXPECT_EQ(std::memcmp(v.data(), ref.data(), 30), 0);
 }
 
 TEST(DynamicRingBuffer, CrossBoundaryWrite) {

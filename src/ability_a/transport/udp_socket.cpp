@@ -73,7 +73,7 @@ UdpSocket::~UdpSocket() { close(); }
 
 void UdpSocket::close() noexcept {
     if (fd_ >= 0) {
-        int ret;
+        int ret = 0;
         do { ret = ::close(fd_); } while (ret < 0 && errno == EINTR);
         fd_ = -1;
     }
@@ -81,7 +81,7 @@ void UdpSocket::close() noexcept {
 
 std::uint16_t UdpSocket::bound_port() const noexcept { return bound_port_; }
 
-core::Result<void> UdpSocket::enable_broadcast() noexcept {
+core::Result<void> UdpSocket::enable_broadcast() const noexcept {
     int on = 1;
     if (::setsockopt(fd_, SOL_SOCKET, SO_BROADCAST,
                      &on, sizeof(on)) < 0) {
@@ -184,7 +184,7 @@ UdpSocket::recv(int timeout_ms) noexcept {
         if (ret < 0)  return core::Result<std::vector<std::uint8_t>>::err(core::ErrorCode::NET_SEND_FAILED);
     }
 
-    std::vector<std::uint8_t> buf(64 * 1024);
+    std::vector<std::uint8_t> buf(static_cast<std::size_t>(64) * 1024);
     sockaddr_in src{};
     socklen_t srclen = sizeof(src);
     ssize_t n = ::recvfrom(fd_, buf.data(), buf.size(), 0,

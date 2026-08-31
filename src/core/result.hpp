@@ -13,6 +13,7 @@
 #define UDAF_CORE_RESULT_HPP
 
 #include <cassert>
+#include <cstdint>
 #include <functional>
 #include <type_traits>
 #include <variant>
@@ -178,7 +179,7 @@ public:
 
 private:
     template <std::size_t I, typename U>
-    Result(std::in_place_index_t<I>, U&& value)
+    Result(std::in_place_index_t<I> /*tag*/, U&& value)
         : storage_(std::in_place_index<I>, std::forward<U>(value)) {}
 
     // storage_ 三态：
@@ -201,11 +202,11 @@ public:
     using error_type = ErrorCode;
 
     [[nodiscard]] static Result ok() {
-        return Result(State::Ok);
+        return {State::Ok};
     }
 
     [[nodiscard]] static Result err(ErrorCode code) {
-        return Result(State::Err, code);
+        return {State::Err, code};
     }
 
     Result() = default;
@@ -227,7 +228,7 @@ public:
         if (is_err()) {
             return std::forward<F>(fn)(error_);
         }
-        return *this;
+        return std::move(*this);
     }
 
     template <typename F>
@@ -256,7 +257,7 @@ public:
     }
 
 private:
-    enum class State { Uninitialized, Ok, Err };
+    enum class State : std::uint8_t { Uninitialized, Ok, Err };
 
     Result(State s) : state_(s) {}
     Result(State s, ErrorCode e) : state_(s), error_(e) {}

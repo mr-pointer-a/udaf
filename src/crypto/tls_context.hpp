@@ -22,7 +22,7 @@ namespace udaf::crypto {
 /// TLS 1.3 上下文（PIMPL）。构造后即可持有 SSL_CTX*，提供工厂方法。
 class TlsContext {
 public:
-    enum class Mode {
+    enum class Mode : std::uint8_t {
         ServerPsk,    // 服务端 PSK
         ClientPsk,    // 客户端 PSK
         ServerPki,    // 服务端 PKI
@@ -66,7 +66,6 @@ public:
     /// 测试/内部访问：返回底层 SSL_CTX* 指针（不转移所有权）
     [[nodiscard]] void* native_handle() const noexcept;
 
-public:
     /// PIMPL 实现类型（公开以便实现文件构造）
     struct Impl;
 

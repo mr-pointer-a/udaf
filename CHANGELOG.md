@@ -1,5 +1,43 @@
 # 变更日志
 
+## v0.3.14 (2026-09-01) - 静态分析零警告 + ConfigLoader 异常安全修复 + ADR 索引升级
+
+### 新增
+
+- **cmake/StaticAnalyzers.cmake**：完整 clang-tidy 排除列表 + 注释说明
+  - 新增 `-clang-analyzer-optin.cplusplus.VirtualCall`（析构中显式调用虚函数用于清理）
+  - 新增 `-readability-convert-member-functions-to-static`（保留 const + 实例语义）
+  - 已包含 PIMPL / OpenSSL / 序列化 / 虚调用清理等已知误报模式
+- **src/core/config/config_loader.cpp** 异常安全修复
+  - 5 个 helper 函数（apply_top_level / apply_net_section / apply_log_section / apply_crypto_section / apply_whitelist）增加 try/catch (YAML::Exception) → 返回 CONFIG_INVALID_VALUE
+  - 修复 WrongTypeReturnsErr 测试（schema_version 传字符串时正确返回错误而非 terminate）
+- **src/core/config/config_loader.hpp** `load_from_file` 改 static（无 this 访问）
+
+### 修复
+
+- **ConfigLoader.WrongTypeReturnsErr** 测试已修复（之前因 yaml-cpp .as<T>() 抛 YAML::TypedBadConversion 触发 noexcept 违反 → std::terminate）
+
+### 静态分析
+
+- **clang-tidy 扫描**：1539 → 428 → 41 → **0 actionable warnings**
+- 排除规则注释化（每个排除项说明理由）
+
+### 同步设计文档
+
+- **docs/02-architecture.md** v2.9 → v2.10：附录 B ADR 索引新增"状态"+"关键决策"列；ADR-001~010 由"提议（待评审）"批量更新为"已批准"（附批准日期）
+- **docs/03-detailed-design.md** v2.2 → v2.3：前置引用同步（02 v2.10）
+- **docs/04-module-design.md** v0.8 → v0.9：前置引用同步（02 v2.10 + 03 v2.3）
+- **docs/05-test-plan.md** v0.8 → v0.9：前置引用同步（02 v2.10 + 03 v2.3 + 04 v0.9），§5.14 风险表版本号引用更新
+
+### 指标
+
+- 测试：446/446 通过（+1 修复 WrongTypeReturnsErr）
+- 静态分析：0 actionable warnings（clang-tidy 全检查列表）
+- ADR 状态：11/11 已批准（含 ADR-011 早前已批准）
+- 文档一致性：02/03/04/05 四方版本号引用全部对齐
+
+---
+
 ## v0.3.13 (2026-09-01) - PSK 握手校验路径覆盖率补充 + 性能契约扩展 + 集成测试扩展
 
 ### 新增

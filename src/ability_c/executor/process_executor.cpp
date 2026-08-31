@@ -2,11 +2,12 @@
 #include "process_executor.hpp"
 
 #include <fcntl.h>
-#include <signal.h>
+#include <csignal>
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstring>
@@ -22,10 +23,9 @@ namespace {
 bool in_whitelist(const std::string& exe,
                   const std::vector<std::string>& allow) {
     if (allow.empty()) return false;  // 默认拒绝
-    for (const auto& a : allow) {
-        if (a == exe) return true;
-    }
-    return false;
+    return std::ranges::any_of(allow, [&exe](const std::string& a) {
+        return a == exe;
+    });
 }
 
 }  // namespace
@@ -78,7 +78,7 @@ ProcessExecutor::execute(const Options& opts) noexcept {
     // 读管道（简化：不带 timeout 实现）
     std::array<char, 4096> buf{};
     Result res;
-    ssize_t n;
+    ssize_t n = 0;
     while ((n = ::read(out_pipe[0], buf.data(), buf.size())) > 0) {
         res.stdout_text.append(buf.data(), static_cast<std::size_t>(n));
     }

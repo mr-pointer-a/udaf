@@ -49,7 +49,7 @@ core::Result<void> Client::stop() noexcept {
 }
 
 std::vector<udaf::ability_a::registry::RegistryEntry>
-Client::discover(std::string capability_filter) noexcept {
+Client::discover(const std::string& capability_filter) noexcept {
     (void)capability_filter;  // 简化：直接全部返回
     return impl_->registry->snapshot();
 }
@@ -81,7 +81,8 @@ TopologySummary Client::topology_summary() noexcept {
 }
 
 core::Result<std::uint64_t>
-Client::push_file(std::string src, std::string dst_node, std::string dst_path) noexcept {
+Client::push_file(const std::string& src, const std::string& dst_node,
+                  const std::string& dst_path) noexcept {
     if (!impl_->audit_logger) return core::Result<std::uint64_t>::err(core::ErrorCode::INTERNAL);
     if (src.empty() || dst_node.empty() || dst_path.empty()) {
         return core::Result<std::uint64_t>::err(core::ErrorCode::INVALID_ARG);
@@ -98,7 +99,8 @@ Client::push_file(std::string src, std::string dst_node, std::string dst_path) n
 }
 
 core::Result<std::uint64_t>
-Client::pull_file(std::string src_node, std::string src_path, std::string dst) noexcept {
+Client::pull_file(const std::string& src_node, const std::string& src_path,
+                  const std::string& dst) noexcept {
     if (!impl_->audit_logger) return core::Result<std::uint64_t>::err(core::ErrorCode::INTERNAL);
     if (!impl_->whitelist->contains(src_node)) {
         return core::Result<std::uint64_t>::err(core::ErrorCode::BIZ_AUTH_UNTRUSTED);
@@ -111,7 +113,7 @@ Client::pull_file(std::string src_node, std::string src_path, std::string dst) n
 }
 
 core::Result<std::uint64_t>
-Client::run_remote(std::string node_id, std::string command,
+Client::run_remote(const std::string& node_id, const std::string& command,
                    std::vector<std::string> args) noexcept {
     if (!impl_->whitelist->contains(node_id)) {
         return core::Result<std::uint64_t>::err(core::ErrorCode::BIZ_AUTH_UNTRUSTED);
@@ -146,7 +148,7 @@ Client::register_node(std::string node_id, std::string hostname,
     return impl_->registry->register_node(e);
 }
 
-core::Result<bool> Client::unregister_node(std::string node_id) noexcept {
+core::Result<bool> Client::unregister_node(const std::string& node_id) noexcept {
     return impl_->registry->unregister_node(node_id);
 }
 
@@ -204,20 +206,24 @@ Client::trust_add(std::string node_id, std::string fingerprint_hex,
     return r;
 }
 
-core::Result<bool> Client::trust_remove(std::string node_id) noexcept {
-    auto r = impl_->whitelist->remove(node_id);
-    if (r.is_err()) return r;
-    if (!r.value()) return core::Result<bool>::err(core::ErrorCode::NODE_NOT_FOUND);
-    if (impl_->audit_logger) {
-        (void)impl_->audit_logger->append(udaf::audit::ActionType::WhitelistUpdate,
-                                          impl_->cfg.node_id, node_id,
-                                          "{\"event\":\"remove\"}");
+core::Result<bool> Client::trust_remove(const std::string& node_id) noexcept {
+    try {
+        auto r = impl_->whitelist->remove(node_id);
+        if (r.is_err()) return r;
+        if (!r.value()) return core::Result<bool>::err(core::ErrorCode::NODE_NOT_FOUND);
+        if (impl_->audit_logger) {
+            (void)impl_->audit_logger->append(udaf::audit::ActionType::WhitelistUpdate,
+                                              impl_->cfg.node_id, node_id,
+                                              "{\"event\":\"remove\"}");
+        }
+        return r;
+    } catch (const std::exception&) {
+        return core::Result<bool>::err(core::ErrorCode::INTERNAL);
     }
-    return r;
 }
 
 core::Result<std::uint64_t>
-Client::psk_rotate(std::string new_psk_path) noexcept {
+Client::psk_rotate(const std::string& new_psk_path) noexcept {
     if (!impl_->audit_logger) return core::Result<std::uint64_t>::err(core::ErrorCode::INTERNAL);
     if (new_psk_path.empty()) return core::Result<std::uint64_t>::err(core::ErrorCode::INVALID_ARG);
     std::ostringstream json;
@@ -227,7 +233,7 @@ Client::psk_rotate(std::string new_psk_path) noexcept {
 }
 
 core::Result<std::uint64_t>
-Client::auth_psk(std::string node_id) noexcept {
+Client::auth_psk(const std::string& node_id) noexcept {
     if (!impl_->audit_logger) return core::Result<std::uint64_t>::err(core::ErrorCode::INTERNAL);
     if (!impl_->whitelist->contains(node_id)) {
         return core::Result<std::uint64_t>::err(core::ErrorCode::BIZ_AUTH_UNTRUSTED);
@@ -237,7 +243,7 @@ Client::auth_psk(std::string node_id) noexcept {
 }
 
 core::Result<std::uint64_t>
-Client::migrate(std::string src_path, std::string dst_path) noexcept {
+Client::migrate(const std::string& src_path, const std::string& dst_path) noexcept {
     if (!impl_->audit_logger) return core::Result<std::uint64_t>::err(core::ErrorCode::INTERNAL);
     if (src_path.empty() || dst_path.empty()) {
         return core::Result<std::uint64_t>::err(core::ErrorCode::INVALID_ARG);

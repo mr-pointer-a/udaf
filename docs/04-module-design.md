@@ -1,9 +1,9 @@
 # 详细设计（Phase 4）
 
-> **版本**：v0.8
+> **版本**：v0.9
 > **状态**：草稿
 > **日期**：2026-09-01
-> **前置**：[`docs/03-detailed-design.md`](03-detailed-design.md) v2.2 + [`docs/02-architecture.md`](02-architecture.md) v2.9
+> **前置**：[`docs/03-detailed-design.md`](03-detailed-design.md) v2.3 + [`docs/02-architecture.md`](02-architecture.md) v2.10
 
 ---
 
@@ -1187,3 +1187,4 @@ struct PortInfo {
 | v0.6 | 2026-08-27 | 对齐03（概要设计）权威定义：Transaction→TopologyTransaction（独立类）；commit()→commit(TopologyTransaction&& tx)（右值引用防重复提交）；add_edge/remove_edge→connect/disconnect；Topology 新增 Wal& wal_ 成员；删除 Wal::Entry 重复定义；前置引用03版本号修正 v1.9→v2.0 |
 | v0.7 | 2026-08-28 | 同步上游 02 v2.8 + 03 v2.1：§2.3 Topology 性能契约 #25~#29 责任模块对齐；§2.5 Channel 性能契约 #5/#7/#10 责任模块对齐；§2.11 CmdExecNode 性能契约 #9/#12 责任模块对齐 |
 | v0.8 | 2026-09-01 | 同步上游 02 v2.9 + 03 v2.2：§2.3 Topology 性能契约 #33 拓扑事务批量 commit 责任模块对齐；§2.5 Channel §2.11 与新增 #30/#31/#32 性能契约责任模块对齐 |
+| v0.9 | 2026-09-01 | **ADR 索引同步**：架构文档附录 B 升级（新增"状态"+"关键决策"列），ADR-001~010 状态批量更新；架构版本升 v2.9 → v2.10；§1.2 前置引用同步 |

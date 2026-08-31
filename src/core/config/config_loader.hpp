@@ -83,14 +83,14 @@ public:
     /// 从 YAML 文件加载。
     /// @param file_path 配置文件绝对路径
     /// @return Ok(Config) / Err(CONFIG_PARSE_FAILED / CONFIG_INVALID_VALUE / ...)
-    [[nodiscard]] Result<Config> load_from_file(const std::string& file_path) const noexcept;
+    [[nodiscard]] static Result<Config> load_from_file(const std::string& file_path) noexcept;
 
     /// 从 YAML 字符串加载（用于单元测试 + 内嵌配置）。
-    [[nodiscard]] Result<Config> load_from_string(const std::string& yaml_content) const noexcept;
+    [[nodiscard]] static Result<Config> load_from_string(const std::string& yaml_content) noexcept;
 
     /// 校验 Config 完整性与合法性（必需字段、非空约束、值范围等）。
     /// @return Ok() / Err(CONFIG_MISSING_REQUIRED / CONFIG_INVALID_VALUE)
-    [[nodiscard]] Result<void> validate(const Config& cfg) const noexcept;
+    [[nodiscard]] static Result<void> validate(const Config& cfg) noexcept;
 };
 
 /// 将字符串转换为 NetworkMode（不区分大小写）。

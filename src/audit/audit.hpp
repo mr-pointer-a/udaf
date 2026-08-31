@@ -21,7 +21,7 @@
 namespace udaf::audit {
 
 // 19 项 ActionType（ADR-006 §2.1 + v1.7 扩展 6 项）
-enum class ActionType : std::uint16_t {
+enum class ActionType : std::uint8_t {
     NodeRegister            = 1,
     NodeUnregister          = 2,
     NodeHeartbeat           = 3,

@@ -60,7 +60,7 @@ public:
 
     /// 查询当前注册节点（按 capability 过滤；空 = 全部）
     std::vector<udaf::ability_a::registry::RegistryEntry>
-    discover(std::string capability_filter) noexcept;
+    discover(const std::string& capability_filter) noexcept;
 
     /// 注册一条审计事件（便捷 API）
     [[nodiscard]] core::Result<std::uint64_t>
@@ -77,13 +77,16 @@ public:
 
     /// 推 / 拉文件（占位：返回审计 sequence 表示"任务已创建"）
     [[nodiscard]] core::Result<std::uint64_t>
-    push_file(std::string src, std::string dst_node, std::string dst_path) noexcept;
+    push_file(const std::string& src, const std::string& dst_node,
+              const std::string& dst_path) noexcept;
     [[nodiscard]] core::Result<std::uint64_t>
-    pull_file(std::string src_node, std::string src_path, std::string dst) noexcept;
+    pull_file(const std::string& src_node, const std::string& src_path,
+              const std::string& dst) noexcept;
 
     /// 在远端执行命令（占位：白名单 /bin/echo）
     [[nodiscard]] core::Result<std::uint64_t>
-    run_remote(std::string node_id, std::string command, std::vector<std::string> args) noexcept;
+    run_remote(const std::string& node_id, const std::string& command,
+               std::vector<std::string> args) noexcept;
 
     /// 节点管理（占位：基于 registry snapshot）
     [[nodiscard]] std::vector<std::string> list_nodes() noexcept;
@@ -91,7 +94,7 @@ public:
                                                     std::string hostname,
                                                     std::string bind_addr,
                                                     std::uint16_t bind_port) noexcept;
-    [[nodiscard]] core::Result<bool> unregister_node(std::string node_id) noexcept;
+    [[nodiscard]] core::Result<bool> unregister_node(const std::string& node_id) noexcept;
 
     /// 白名单管理
     [[nodiscard]] std::vector<TrustEntry> trust_list() noexcept;
@@ -99,17 +102,17 @@ public:
     trust_add(std::string node_id, std::string fingerprint_hex,
               std::vector<std::string> capabilities) noexcept;
     [[nodiscard]] core::Result<bool>
-    trust_remove(std::string node_id) noexcept;
+    trust_remove(const std::string& node_id) noexcept;
 
     /// PSK 轮转 / 认证（占位）
     [[nodiscard]] core::Result<std::uint64_t>
-    psk_rotate(std::string new_psk_path) noexcept;
+    psk_rotate(const std::string& new_psk_path) noexcept;
     [[nodiscard]] core::Result<std::uint64_t>
-    auth_psk(std::string node_id) noexcept;
+    auth_psk(const std::string& node_id) noexcept;
 
     /// 迁移（占位）
     [[nodiscard]] core::Result<std::uint64_t>
-    migrate(std::string src_path, std::string dst_path) noexcept;
+    migrate(const std::string& src_path, const std::string& dst_path) noexcept;
 
     /// 配置：show（仅打印 cfg + 注册表大小）
     [[nodiscard]] std::string config_show() noexcept;

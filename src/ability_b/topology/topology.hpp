@@ -80,7 +80,7 @@ public:
     [[nodiscard]] bool empty() const noexcept { return items_.empty(); }
 
     /// 仅内部访问
-    const std::vector<TxItem>& items() const noexcept { return items_; }
+    [[nodiscard]] const std::vector<TxItem>& items() const noexcept { return items_; }
 
 private:
     std::vector<TxItem> items_;
@@ -94,7 +94,7 @@ public:
         : wal_(std::move(wal)) {}
 
     /// 开始一个新事务
-    [[nodiscard]] core::Result<TopologyTransaction> begin_transaction() noexcept;
+    [[nodiscard]] static core::Result<TopologyTransaction> begin_transaction() noexcept;
 
     /// 提交事务（消耗 tx，右值引用防重复提交）
     /// @return Err(INVALID_ARG) 当 tx 已为空

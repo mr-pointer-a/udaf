@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <new>
 
 namespace udaf::ability_b::serialization {
 
@@ -26,6 +27,7 @@ inline std::uint32_t read_u32_be(std::span<const std::uint8_t> buf) {
 
 core::Result<std::vector<std::uint8_t>>
 SerializerBase::encode(std::span<const std::uint8_t> /*payload*/) const noexcept {
+    try {
     auto payload_result = const_cast<SerializerBase*>(this)->encode_payload();
     if (payload_result.is_err()) {
         return core::Result<std::vector<std::uint8_t>>::err(payload_result.error());
@@ -46,6 +48,10 @@ SerializerBase::encode(std::span<const std::uint8_t> /*payload*/) const noexcept
     out.insert(out.end(), tn.begin(), tn.end());
     out.insert(out.end(), p.begin(), p.end());
     return core::Result<std::vector<std::uint8_t>>::ok(std::move(out));
+    } catch (const std::exception&) {
+        return core::Result<std::vector<std::uint8_t>>::err(
+            core::ErrorCode::RES_MEMORY_EXHAUSTED);
+    }
 }
 
 core::Result<std::vector<std::uint8_t>>

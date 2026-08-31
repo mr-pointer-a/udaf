@@ -57,6 +57,7 @@ udaf_error_t udaf_client_stop(void* client) {
 }
 
 void udaf_client_destroy(void* client) {
+    // NOLINTNEXTLINE(cppcoreguidelines-owning-memory) - C ABI 必须用 void* 传递 owning 指针
     delete static_cast<ClientRep*>(client);
 }
 

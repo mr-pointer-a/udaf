@@ -178,3 +178,18 @@ TEST_F(LoggerTest, LevelBeforeInit) {
     EXPECT_EQ(Logger::instance().level(), LogLevel::Info);
 }
 
+// 覆盖 logger.cpp:32 LogLevel::Critical → spdlog::critical
+TEST_F(LoggerTest, SetLevelCritical) {
+    Logger::instance().set_level(LogLevel::Critical);
+    EXPECT_EQ(Logger::instance().level(), LogLevel::Critical);
+    Logger::instance().critical("test critical");
+}
+
+// 覆盖 logger.cpp:62-63 lazy impl_ 创建路径（先 shutdown 后 init）
+TEST_F(LoggerTest, ReinitAfterShutdown) {
+    Logger::instance().shutdown();
+    // 重新初始化应触发 impl_ make_unique
+    Logger::instance().init(LoggerConfig{});
+    EXPECT_EQ(Logger::instance().level(), LogLevel::Info);
+}
+

@@ -54,7 +54,7 @@ public:
     recv(int timeout_ms) noexcept;
 
     /// 启用广播（需要 bind 时已设置 SO_BROADCAST）
-    [[nodiscard]] core::Result<void> enable_broadcast() noexcept;
+    [[nodiscard]] core::Result<void> enable_broadcast() const noexcept;
 
     /// 启用 PSK 加密（nullptr 表示关闭）
     void set_psk(std::span<const std::uint8_t> psk) noexcept;
@@ -73,7 +73,7 @@ private:
     /// 检查并更新广播速率限制
     bool check_broadcast_rate() noexcept;
 
-    int fd_ = -1;
+    mutable int fd_ = -1;
     std::uint16_t bound_port_ = 0;
     std::vector<std::uint8_t> psk_;
 
@@ -84,7 +84,7 @@ private:
     std::mutex unicast_mtx_;
     std::unordered_map<std::string,
         std::vector<std::chrono::steady_clock::time_point>> unicast_history_;
-    std::chrono::steady_clock::time_point last_broadcast_at_{};
+    std::chrono::steady_clock::time_point last_broadcast_at_;
 };
 
 }  // namespace udaf::ability_a::transport

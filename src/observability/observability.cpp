@@ -18,7 +18,7 @@ std::int64_t now_ns() noexcept {
         std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-void to_hex(unsigned char* dst, std::size_t n, std::string& out) {
+void to_hex(const unsigned char* dst, std::size_t n, std::string& out) {
     static constexpr char kHex[] = "0123456789abcdef";
     out.clear();
     out.reserve(n * 2);
@@ -106,7 +106,7 @@ Tracer::Span Tracer::begin(std::string name) noexcept {
 
 void Tracer::end(Span& s) noexcept { s.end_ns = now_ns(); }
 
-void Tracer::inject(const Span& s, std::unordered_map<std::string, std::string>& kv) const noexcept {
+void Tracer::inject(const Span& s, std::unordered_map<std::string, std::string>& kv) noexcept {
     kv["traceparent"] = "00-" + s.trace_id + "-" + s.span_id + "-01";
 }
 

@@ -59,19 +59,19 @@ TEST(UdafObs_Meter, AllTenBuiltinNames) {
 
 TEST(UdafObs_Tracer, BeginEndAndInjectExtract) {
     obs::Tracer t;
-    auto s = t.begin("test_op");
+    auto s = obs::Tracer::begin("test_op");
     EXPECT_FALSE(s.trace_id.empty());
     EXPECT_EQ(s.trace_id.size(), 32u);
     EXPECT_EQ(s.span_id.size(), 16u);
     std::this_thread::sleep_for(std::chrono::microseconds(100));
-    t.end(s);
+    obs::Tracer::end(s);
     EXPECT_GT(s.end_ns, s.start_ns);
 
     std::unordered_map<std::string, std::string> kv;
-    t.inject(s, kv);
+    obs::Tracer::inject(s, kv);
     EXPECT_NE(kv.find("traceparent"), kv.end());
 
-    auto s2 = t.extract("remote_op", kv);
+    auto s2 = obs::Tracer::extract("remote_op", kv);
     EXPECT_EQ(s2.trace_id, s.trace_id);
     EXPECT_EQ(s2.span_id, s.span_id);
 }

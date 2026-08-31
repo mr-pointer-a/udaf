@@ -4,6 +4,7 @@
 #include "core/log/logger.hpp"
 #include "crypto/hmac.hpp"
 
+#include <array>
 #include <cstring>
 #include <thread>
 #include <utility>
@@ -83,14 +84,14 @@ Scanner::handle_frame(std::span<const std::uint8_t> frame) noexcept {
     }
 
     // 提取 nonce（8B @ 8..16）
-    char nonce_hex[17] = {};
+    std::array<char, 17> nonce_hex{};
     static const char* hex = "0123456789abcdef";
     for (std::size_t i = 0; i < 8; ++i) {
         const auto b = frame[8 + i];
         nonce_hex[i*2]   = hex[(b >> 4) & 0xF];
         nonce_hex[i*2+1] = hex[b & 0xF];
     }
-    std::string nonce_str(nonce_hex, 16);
+    std::string nonce_str(nonce_hex.data(), 16);
 
     // 重放防护
     {
@@ -104,7 +105,7 @@ Scanner::handle_frame(std::span<const std::uint8_t> frame) noexcept {
                 ++it;
             }
         }
-        if (seen_nonces_.count(nonce_str)) {
+        if (seen_nonces_.contains(nonce_str)) {
             return core::Result<bool>::ok(false);  // 已见过，静默忽略
         }
         seen_nonces_[nonce_str] = now;
@@ -130,7 +131,7 @@ Scanner::handle_frame(std::span<const std::uint8_t> frame) noexcept {
     if (payload.node_id.empty()) {
         return core::Result<bool>::err(udaf::core::ErrorCode::SERIALIZE_DECODE_FAILED);
     }
-    if (registry_) {
+    if (registry_ != nullptr) {
         udaf::ability_a::registry::RegistryEntry entry;
         entry.node_id_      = std::move(payload.node_id);
         entry.hostname_     = std::move(payload.hostname);

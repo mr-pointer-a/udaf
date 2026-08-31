@@ -19,6 +19,8 @@ void* as_ssl(void* p) { return p; }
 }  // namespace
 
 struct PkiHandshakeDeleter {
+    // PkiHandshake 在 pki.hpp 已完整定义，unique_ptr 通过本 deleter 安全释放
+    // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
     void operator()(PkiHandshake* p) const noexcept { delete p; }
 };
 

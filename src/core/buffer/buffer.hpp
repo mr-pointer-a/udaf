@@ -184,9 +184,9 @@ public:
     [[nodiscard]] Result<std::size_t> read(std::span<std::byte> out) noexcept;
 
 private:
+    alignas(64) std::atomic<std::size_t> head_{0};
     std::size_t capacity_;
     std::vector<std::byte> storage_;
-    alignas(64) std::atomic<std::size_t> head_{0};
     alignas(64) std::atomic<std::size_t> tail_{0};
 
     [[nodiscard]] static std::size_t index(std::size_t pos, std::size_t cap) noexcept {

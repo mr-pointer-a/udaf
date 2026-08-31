@@ -1,8 +1,8 @@
 # 02 架构设计
 
 > **项目代号**：UDAF（Unified Device & Application Framework）
-> **文档版本**：v2.8
-> **日期**：2026-08-28
+> **文档版本**：v2.10
+> **日期**：2026-09-01
 > **阶段**：阶段 2 / 5（架构设计）
 > **前置文档**：[`docs/01-requirements.md`](01-requirements.md)
 > **状态**：草案，待评审
@@ -1119,19 +1119,24 @@ struct NetInterfaceResult {
 
 ## 附录 B：ADR 索引
 
-| ADR | 主题 |
-|-----|------|
-| [ADR-001](adr/ADR-001-message-broker.md) | 消息中间件选型 |
-| [ADR-002](adr/ADR-002-serialization.md) | 序列化格式选型 |
-| [ADR-003](adr/ADR-003-process-model.md) | 进程模型（设备端 / 主机端） |
-| [ADR-004](adr/ADR-004-auth-model.md) | 认证模型（PSK → PKI 分阶段） |
-| [ADR-005](adr/ADR-005-peer-whitelist.md) | 跨主机调度白名单 |
-| [ADR-006](adr/ADR-006-audit-log.md) | 审计日志模块 |
-| [ADR-007](adr/ADR-007-psk-kdf.md) | PSK KDF 派生与 AEAD 加密 |
-| [ADR-008](adr/ADR-008-observability.md) | 可观测性方案 |
-| [ADR-009](adr/ADR-009-dependency-management.md) | 依赖管理方案 |
-| [ADR-010](adr/ADR-010-cli-conventions.md) | CLI 工具集与输出约定 |
-| [ADR-011](adr/ADR-011-error-codes.md) | ErrorCode 统一定义（单一权威源） |
+| ADR | 主题 | 状态 | 关键决策 |
+|-----|------|------|----------|
+| [ADR-001](adr/ADR-001-message-broker.md) | 消息中间件选型 | 已批准 | ZMQ（inproc/ipc/tcp）作为传输后端 |
+| [ADR-002](adr/ADR-002-serialization.md) | 序列化格式选型 | 已批准 | 自研二进制（schema_version 头 + payload），不用 protobuf |
+| [ADR-003](adr/ADR-003-process-model.md) | 进程模型（设备端 / 主机端） | 已批准 | 单进程多节点（fork+exec）；设备端零内存映射 |
+| [ADR-004](adr/ADR-004-auth-model.md) | 认证模型（PSK → PKI 分阶段） | 已批准 | 出厂 PSK 过渡，TLS 1.3 + AEAD AES-GCM |
+| [ADR-005](adr/ADR-005-peer-whitelist.md) | 跨主机调度白名单 | 已批准 | device→host 调度强制白名单（HMAC 完整性） |
+| [ADR-006](adr/ADR-006-audit-log.md) | 审计日志模块 | 已批准 | SHA-512 hash chain + 创世 hash（NodeId+boot_random+boot_time） |
+| [ADR-007](adr/ADR-007-psk-kdf.md) | PSK KDF 派生与 AEAD 加密 | 已批准 | HKDF-SHA256 固定输入顺序（防时序侧信道） |
+| [ADR-008](adr/ADR-008-observability.md) | 可观测性方案 | 已批准 | 10 项内置指标 + Prometheus/OTLP 双导出 |
+| [ADR-009](adr/ADR-009-dependency-management.md) | 依赖管理方案 | 已批准 | apt 一行安装，不走 vcpkg |
+| [ADR-010](adr/ADR-010-cli-conventions.md) | CLI 工具集与输出约定 | 已批准 | 14 子命令 + 13 退出码 + 三态输出 |
+| [ADR-011](adr/ADR-011-error-codes.md) | ErrorCode 统一定义（单一权威源） | 已批准 | 61 条 SCREAMING_SNAKE 错误码 + C 聚合桶（13 个 UDAF_ERR_*） |
+
+> **状态说明**：
+> - 已批准 = 提议已被设计阶段 Round 5/6 评审通过，实现阶段完成且测试通过
+> - 提议 = 等待评审
+> - 弃用 = 历史决策，已被新 ADR 替代
 
 ## 附录 C：变更记录
 
@@ -1147,4 +1152,5 @@ struct NetInterfaceResult {
 | v2.6 | 2026-08-27 | Round 4/5 一致性小修；性能契约表头保留"19 项 + 4 项"措辞 |
 | v2.7 | 2026-08-27 | §3.4 性能契约表头统一为 24 项措辞（与 03 §11.2 对齐） |
 | v2.8 | 2026-08-28 | **§3.4 性能契约 24→29 项**：①新增 #25 命令往返延迟 P99 < 15ms；②新增 #26 加密性能开销（吞吐损失）< 20%；③新增 #27 审计日志写入吞吐 ≥ 1000 条/秒；④新增 #28 设备端峰值内存 < 16MB；⑤新增 #29 主机端峰值内存 < 128MB；⑥表头"24 项"→"29 项"；⑦对齐 05-test-plan v0.6 §5.5.1 全量基准清单 |
-| v2.9 | 2026-09-01 | **§3.4 性能契约 29→33 项（v0.3.13 实现新增）**：①新增 #30 AEAD 大块吞吐 ≥ 200 MB/s；②新增 #31 审计 hash chain 全链校验 ≤ 100ms（500 条）；③新增 #32 WAL append+replay 完整链路 ≤ 50ms（200 条）；④新增 #33 拓扑事务批量 commit ≤ 100ms（50 节点）；⑤表头"29 项"→"33 项"；⑥对齐 03 v2.2 + 05 v0.8 + 实现 v0.3.13 | |
+| v2.9 | 2026-09-01 | **§3.4 性能契约 29→33 项（v0.3.13 实现新增）**：①新增 #30 AEAD 大块吞吐 ≥ 200 MB/s；②新增 #31 审计 hash chain 全链校验 ≤ 100ms（500 条）；③新增 #32 WAL append+replay 完整链路 ≤ 50ms（200 条）；④新增 #33 拓扑事务批量 commit ≤ 100ms（50 节点）；⑤表头"29 项"→"33 项"；⑥对齐 03 v2.2 + 05 v0.8 + 实现 v0.3.13 |
+| v2.10 | 2026-09-01 | **ADR 索引升级**：附录 B 新增"状态"+"关键决策"两列；ADR-001~010 由"提议（待评审）"批量更新为"已批准"（实现阶段 Round 5/6 评审通过 + 446/446 测试通过 + clang-tidy 0 警告）；ADR-011 维持原状态 |

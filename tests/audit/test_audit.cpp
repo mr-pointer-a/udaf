@@ -120,25 +120,27 @@ TEST_F(AuditTmp, WriteThroughput) {
 // 验证 compute_params_hash：相同输入产生相同 hash（通过 append 间接验证）
 TEST_F(AuditTmp, ParamsHashDeterministic) {
     AuditLogger log(path_.string());
-    // 两次 append 相同 params → 第一次的 params_hash 应在文件中出现一次
+    // 两次 append 相同 params → 两条 event 的 params_hash 字段应相同
     ASSERT_TRUE(log.append(ActionType::NodeRegister, "a", "t", "{\"x\":1}").is_ok());
     ASSERT_TRUE(log.append(ActionType::NodeRegister, "a", "t", "{\"x\":1}").is_ok());
     std::ifstream in(path_);
     std::string line;
-    int dup_count = 0;
-    std::string first_hash;
+    // 跳过 GENESIS 行
+    std::getline(in, line);
+    std::vector<std::string> event_hashes;
     while (std::getline(in, line)) {
         // 格式: seq|action|actor|target|ts|prev|params_h|json
-        // params_h 是第 7 个 |
+        // 按 '|' 分隔，第 7 段（索引 6）是 params_hash
+        std::vector<std::string> parts;
+        std::string seg;
         std::stringstream ss(line);
-        std::string field;
-        for (int i = 0; i < 7 && std::getline(ss, field, '|'); ++i) {}
-        if (field.size() == 128u) {
-            if (first_hash.empty()) first_hash = field;
-            else if (field == first_hash) ++dup_count;
-        }
+        while (std::getline(ss, seg, '|')) parts.push_back(seg);
+        ASSERT_EQ(parts.size(), 8u) << "event 行应有 8 段";
+        event_hashes.push_back(parts[6]);
     }
-    EXPECT_EQ(dup_count, 1) << "两次相同 params 应有相同 hash";
+    ASSERT_EQ(event_hashes.size(), 2u);
+    EXPECT_EQ(event_hashes[0], event_hashes[1])
+        << "两次相同 params 应有相同 hash";
 }
 
 // 验证 compute_params_hash：不同输入产生不同 hash（间接通过 append）
@@ -148,20 +150,18 @@ TEST_F(AuditTmp, ParamsHashDistinct) {
     ASSERT_TRUE(log.append(ActionType::NodeRegister, "a", "t", "{\"x\":2}").is_ok());
     std::ifstream in(path_);
     std::string line;
-    std::string h1, h2;
-    int count = 0;
+    std::getline(in, line);  // 跳过 GENESIS
+    std::vector<std::string> hashes;
     while (std::getline(in, line)) {
+        std::vector<std::string> parts;
+        std::string seg;
         std::stringstream ss(line);
-        std::string field;
-        for (int i = 0; i < 7 && std::getline(ss, field, '|'); ++i) {}
-        if (field.size() == 128u) {
-            if (count == 0) h1 = field;
-            else if (count == 1) h2 = field;
-            ++count;
-        }
+        while (std::getline(ss, seg, '|')) parts.push_back(seg);
+        ASSERT_EQ(parts.size(), 8u);
+        hashes.push_back(parts[6]);
     }
-    EXPECT_NE(h1, h2);
-    EXPECT_EQ(count, 2);
+    ASSERT_EQ(hashes.size(), 2u);
+    EXPECT_NE(hashes[0], hashes[1]);
 }
 
 // verify_chain 失败路径：构造 logger 后不 append 直接删除文件，再 verify
@@ -188,4 +188,75 @@ TEST_F(AuditTmp, SequenceReflectsAppends) {
     EXPECT_EQ(log.sequence(), 1u);
     (void)log.append(ActionType::NodeUnregister, "a", "t", "{}");
     EXPECT_EQ(log.sequence(), 2u);
+}
+
+// ===== 覆盖率补充（v0.3.14）=====
+// verify_chain 行 185：旧格式（无 GENESIS 前缀）→ PROTOCOL_VERSION_MISMATCH
+TEST_F(AuditTmp, VerifyChainLegacyFormatReturnsProtocolMismatch) {
+    std::ofstream out(path_);
+    out << "no_genesis_prefix|data|line\n";
+    out.close();
+    AuditLogger log(path_.string());
+    auto v = log.verify_chain();
+    ASSERT_TRUE(v.is_err());
+    EXPECT_EQ(v.error(), udaf::core::ErrorCode::PROTOCOL_VERSION_MISMATCH);
+}
+
+// verify_chain 行 195/198：链断裂（prev_hash 与实际不匹配）→ Ok(false)
+TEST_F(AuditTmp, VerifyChainBrokenReturnsFalse) {
+    AuditLogger log(path_.string());
+    ASSERT_TRUE(log.append(ActionType::NodeRegister, "a", "t", "{\"k\":1}").is_ok());
+    ASSERT_TRUE(log.append(ActionType::NodeRegister, "a", "t", "{\"k\":2}").is_ok());
+
+    // 手动篡改第二条事件的 prev_hash 字段（第 6 段）
+    std::ifstream in(path_);
+    std::vector<std::string> lines;
+    std::string line;
+    while (std::getline(in, line)) lines.push_back(line);
+    in.close();
+    ASSERT_GE(lines.size(), 3u);  // GENESIS + 2 events
+    // 找第 2 个 event 行的第 6 段（prev_hash）
+    std::vector<std::string> parts;
+    std::string seg;
+    std::stringstream ss(lines[2]);
+    while (std::getline(ss, seg, '|')) parts.push_back(seg);
+    ASSERT_EQ(parts.size(), 8u);
+    parts[5] = std::string(parts[5].size(), '0');  // 替换 prev_hash 为全 0
+    // 重写
+    std::ofstream out(path_);
+    out << lines[0] << '\n';
+    out << parts[0];
+    for (std::size_t i = 1; i < parts.size(); ++i) out << '|' << parts[i];
+    out << '\n';
+    out.close();
+
+    auto v = log.verify_chain();
+    ASSERT_TRUE(v.is_ok());
+    EXPECT_FALSE(v.value()) << "链断裂 verify_chain 应返回 Ok(false)";
+}
+
+// 覆盖 audit.cpp 行 195：parse_event_line 解析失败（segment 数 != 7）
+TEST_F(AuditTmp, VerifyChainCorruptedEventReturnsFalse) {
+    AuditLogger log(path_.string());
+    ASSERT_TRUE(log.append(ActionType::NodeRegister, "a", "t", "{}").is_ok());
+    // 在文件末尾追加一行损坏的事件（缺少 '|'）
+    std::ofstream out(path_, std::ios::app);
+    out << "garbled_line_no_pipes_here\n";
+    out.close();
+    auto v = log.verify_chain();
+    ASSERT_TRUE(v.is_ok());
+    EXPECT_FALSE(v.value()) << "损坏行应让 verify_chain 返回 Ok(false)";
+}
+
+// 覆盖 audit.cpp 行 87-88：parse_event_line 触发 stoull/stoll 异常（segment 含非数字）
+TEST_F(AuditTmp, VerifyChainEventWithNonNumericSegmentsReturnsFalse) {
+    AuditLogger log(path_.string());
+    ASSERT_TRUE(log.append(ActionType::NodeRegister, "a", "t", "{}").is_ok());
+    // 追加一行格式正确但字段含非数字字符 → stoull 抛异常 → parse 返回 false → verify 返回 Ok(false)
+    std::ofstream out(path_, std::ios::app);
+    out << "notanumber|action|a|t|0|prev|phash|{}\n";
+    out.close();
+    auto v = log.verify_chain();
+    ASSERT_TRUE(v.is_ok());
+    EXPECT_FALSE(v.value());
 }

@@ -524,6 +524,21 @@ TEST(UdafCrypto, TlsContextPskLifecycle) {
     EXPECT_NE(srv, nullptr);
 }
 
+// 覆盖 tls_context.hpp 移动构造/移动赋值（覆盖 4 个 FNDA:0 函数）
+TEST(UdafCrypto, TlsContextMoveSemantics) {
+    std::vector<std::uint8_t> psk(32, 0xEE);
+    auto a = udaf::crypto::TlsContext::create_psk(
+        udaf::crypto::TlsContext::Mode::ServerPsk, psk, "src");
+    ASSERT_NE(a, nullptr);
+    // 移动构造
+    udaf::crypto::TlsContext b(std::move(*a));
+    // 移动赋值（先创建 c 再赋值给 a）
+    auto c = udaf::crypto::TlsContext::create_psk(
+        udaf::crypto::TlsContext::Mode::ClientPsk, psk, "dst");
+    ASSERT_NE(c, nullptr);
+    *a = std::move(*c);
+}
+
 // ---------------- 12. Authenticator 接口桩 ----------------
 TEST(UdafCrypto, AuthenticatorInterface) {
     std::vector<std::uint8_t> psk(32, 0xCC);
@@ -722,4 +737,144 @@ TEST(UdafCrypto, PskHandshakeClientFinalizeInvalidResponse) {
     auto r = psk_handshake_client_finalize(bad_psk, req, resp);
     ASSERT_TRUE(r.is_err());
     EXPECT_EQ(r.error(), udaf::core::ErrorCode::INVALID_ARG);
+}
+// ===== 覆盖率补充（v0.3.14）=====
+
+// PskAuthenticator 服务端收到过短请求 → 解析失败 → 返回 PROTOCOL_INVALID_MSG_TYPE
+TEST(UdafCrypto, PskAuthenticatorServerShortBufferRejected) {
+    std::vector<std::uint8_t> psk(32, 0xAA);
+    auto server = PskAuthenticator::create_server(psk, "node-1");
+    ASSERT_NE(server, nullptr);
+
+    // 过短 buffer（< 65 字节）
+    std::vector<std::uint8_t> short_buf(10, 0xFF);
+    auto r = server->process_handshake(short_buf);
+    EXPECT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::PROTOCOL_INVALID_MSG_TYPE);
+}
+
+// PskAuthenticator 客户端收到过短响应 → deserialize 返回空 server_random
+TEST(UdafCrypto, PskAuthenticatorClientShortResponseRejected) {
+    std::vector<std::uint8_t> psk(32, 0xAA);
+    auto client = PskAuthenticator::create_client(psk, "client-1");
+    ASSERT_NE(client, nullptr);
+    auto begin = client->begin_handshake();
+    ASSERT_TRUE(begin.is_ok());
+
+    // 过短响应（< 112 字节）
+    std::vector<std::uint8_t> short_resp(50, 0xEE);
+    auto r = client->process_handshake(short_resp);
+    EXPECT_TRUE(r.is_err());
+}
+
+// PskAuthenticator 服务端在 begin_handshake 时返回 INVALID_ARG（非客户端调用）
+TEST(UdafCrypto, PskAuthenticatorServerBeginHandshakeInvalid) {
+    std::vector<std::uint8_t> psk(32, 0xAA);
+    auto server = PskAuthenticator::create_server(psk, "node-1");
+    ASSERT_NE(server, nullptr);
+    auto r = server->begin_handshake();
+    EXPECT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::INVALID_ARG);
+}
+
+// PskAuthenticator 服务端 process_handshake 收到 id_len 越界请求
+// （buf.size >= 65 但 < 65+id_len → deserialize 清空字段 → PROTOCOL_INVALID_MSG_TYPE）
+TEST(UdafCrypto, PskAuthenticatorServerTruncatedIdentityRejected) {
+    std::vector<std::uint8_t> psk(32, 0xAA);
+    auto server = PskAuthenticator::create_server(psk, "node-1");
+    ASSERT_NE(server, nullptr);
+    // 构造 buf：64 字节 (random+salt) + id_len=255 但 buf 长度只有 100 → 截断
+    std::vector<std::uint8_t> buf(100, 0xAB);
+    buf[64] = 255;  // id_len = 255，但 buf 只到 100
+    auto r = server->process_handshake(buf);
+    EXPECT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::PROTOCOL_INVALID_MSG_TYPE);
+}
+
+// hmac.cpp:44 / 48 / 67 / 70 / 85 未覆盖行
+// 覆盖 HMAC verify 在签名长度不匹配 / 篡改时返回错误
+TEST(UdafCrypto, HmacVerifyMismatchedLength) {
+    using udaf::crypto::hmac_sha256;
+    using udaf::crypto::hmac_sha256_verify;
+    std::vector<std::uint8_t> key(16, 0x11);
+    const std::uint8_t msg[] = {'h','e','l','l','o'};
+    auto sig = hmac_sha256(key, std::span<const std::uint8_t>(msg, 5));
+    ASSERT_TRUE(sig.is_ok());
+    // 截断签名 → verify 应失败
+    std::vector<std::uint8_t> short_sig(sig.value().begin(), sig.value().begin() + 10);
+    EXPECT_TRUE(hmac_sha256_verify(key, std::span<const std::uint8_t>(msg, 5), short_sig).is_err());
+    // 篡改签名 → verify 应失败
+    auto bad_sig = sig.value();
+    bad_sig[0] ^= 0xFF;
+    EXPECT_TRUE(hmac_sha256_verify(key, std::span<const std::uint8_t>(msg, 5), bad_sig).is_err());
+    // 正确签名 → verify 应成功
+    EXPECT_TRUE(hmac_sha256_verify(key, std::span<const std::uint8_t>(msg, 5), sig.value()).is_ok());
+}
+
+// ===== 覆盖率补充（v0.3.14）=====
+// psk.cpp:119-121 psk_aead_encrypt key 长度 != 32 → INVALID_ARG
+TEST(UdafCrypto, PskAeadEncryptInvalidKeyLength) {
+    std::vector<std::uint8_t> short_key(16, 0xAA);  // 非 32 字节
+    std::array<std::uint8_t, 12> nonce{};
+    std::vector<std::uint8_t> pt{'h','i'};
+    auto r = udaf::crypto::psk_aead_encrypt(short_key, nonce, pt, {});
+    EXPECT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::INVALID_ARG);
+}
+
+// psk.cpp:243-250 psk_aead_decrypt 长度校验路径（覆盖 INVALID_ARG/INTERNAL 分支）
+TEST(UdafCrypto, PskAeadDecryptInvalidKeyLength) {
+    std::vector<std::uint8_t> short_key(8, 0xAA);
+    std::array<std::uint8_t, 12> nonce{};
+    std::vector<std::uint8_t> ct(32, 0x00);  // 假密文（不会真用）
+    auto r = udaf::crypto::psk_aead_decrypt(short_key, nonce, ct, {});
+    EXPECT_TRUE(r.is_err());
+    // key 长度错误优先返回
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::INVALID_ARG);
+}
+
+// psk.cpp psk_handshake_server_respond 输入非法 AuthRequest → Err
+TEST(UdafCrypto, PskServerRespondBadRequest) {
+    std::vector<std::uint8_t> psk(32, 0xAB);
+    udaf::crypto::AuthRequest req;  // 空字段（client_random/salt/identity 均空）
+    auto r = udaf::crypto::psk_handshake_server_respond(
+        std::span<const std::uint8_t>(psk.data(), psk.size()), req);
+    EXPECT_TRUE(r.is_err());
+}
+
+// 覆盖 psk_authenticator.cpp:66-68 deserialize_response 检测 buf.size() < 112+len
+TEST(UdafCrypto, PskClientMalformedServerResponse) {
+    std::mt19937_64 rng(0xDEADBEEF);
+    auto psk = make_psk(rng);
+    auto client = PskAuthenticator::create_client(psk, "device-A");
+    ASSERT_NE(client, nullptr);
+    auto client_msg = client->begin_handshake();
+    ASSERT_TRUE(client_msg.is_ok());
+
+    // 构造一个 len 字段声明 100 字节但实际只有 4 字节数据的畸形响应
+    std::vector<std::uint8_t> bad_resp(116, 0xCC);
+    std::uint32_t fake_len = 100;
+    std::memcpy(bad_resp.data() + 108, &fake_len, 4);  // offset 108: len 字段
+
+    // 客户端 process_handshake 应返回 Err（deserialize_response 检测到截断）
+    auto r = client->process_handshake(bad_resp);
+    EXPECT_TRUE(r.is_err());
+    EXPECT_FALSE(client->is_handshake_done());
+}
+
+// 覆盖 psk_authenticator.cpp:33-35 deserialize_request buf.size() < 65 + id_len 分支
+TEST(UdafCrypto, PskServerMalformedRequestIdentityLengthExceeds) {
+    std::mt19937_64 rng(0xCAFEBABE);
+    auto psk = make_psk(rng);
+    auto server = PskAuthenticator::create_server(psk, "server-A");
+    ASSERT_NE(server, nullptr);
+
+    // 构造 65 字节的请求：32 client_random + 32 salt + 1 id_len=200（但 buf 只有 65）
+    std::vector<std::uint8_t> bad_req(65, 0xAA);
+    bad_req[64] = 200;  // id_len 远超 buf 实际可用空间
+
+    // 服务端 process_handshake 应返回 Err（id_len 异常 → client_random.clear() → 空判断）
+    auto r = server->process_handshake(bad_req);
+    EXPECT_TRUE(r.is_err());
+    EXPECT_FALSE(server->is_handshake_done());
 }

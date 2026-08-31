@@ -26,7 +26,7 @@ namespace udaf::core {
 
 /// UDAF 错误码枚举。所有 Result<T> / ErrorCode 路径使用此类型。
 /// 禁止自造错误码，必须从此处引用。
-enum class ErrorCode : uint32_t {
+enum class ErrorCode : uint16_t {
     OK = 0,
 
     // ---------- 协议错误 0x1000-0x1FFF ----------

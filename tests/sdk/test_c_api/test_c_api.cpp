@@ -124,6 +124,14 @@ TEST_F(CSdkTmp, PushFileDeniedUntrusted) {
     udaf_audit_result_t out{};
     EXPECT_EQ(udaf_client_push_file(cli, "/src", "untrusted-node", "/dst", &out),
               UDAF_ERR_WHITELIST);
+    // 覆盖 udaf_c.cpp:215 push_file 默认错误路径
+    // 空 src/dst_node/dst_path 触发 Client::push_file 返回 INVALID_ARG
+    EXPECT_EQ(udaf_client_push_file(cli, "", "n", "/d", &out),
+              UDAF_ERR_INVALID_ARG);
+    EXPECT_EQ(udaf_client_push_file(cli, "/s", "", "/d", &out),
+              UDAF_ERR_INVALID_ARG);
+    EXPECT_EQ(udaf_client_push_file(cli, "/s", "n", "", &out),
+              UDAF_ERR_INVALID_ARG);
     udaf_client_destroy(cli);
 }
 
@@ -168,6 +176,25 @@ TEST_F(CSdkTmp, RunRemoteEmptyCmdInvalidArg) {
     const char* args[] = {"hi"};
     EXPECT_EQ(udaf_client_run_remote(cli, "n1", "", args, 1, &out),
               UDAF_ERR_INVALID_ARG);
+    udaf_client_destroy(cli);
+}
+
+// 覆盖 udaf_c.cpp:199 run_remote INTERNAL 分支（audit_logger 为空）
+TEST_F(CSdkTmp, RunRemoteInternalWhenNoAuditLogger) {
+    udaf_client_config_t cfg{};
+    cfg.node_id = "c-host";
+    // 注意：audit_path 留空 → audit_logger_ = nullptr
+    void* cli = nullptr;
+    ASSERT_EQ(udaf_client_create(&cfg, &cli), UDAF_OK);
+    // 加入白名单（绕开 UNTRUSTED 错误）
+    const char* caps[] = {"cmd_exec"};
+    ASSERT_EQ(udaf_client_trust_add(cli, "n1",
+        "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+        caps, 1), UDAF_OK);
+    udaf_audit_result_t out{};
+    const char* args[] = {"hi"};
+    EXPECT_EQ(udaf_client_run_remote(cli, "n1", "echo", args, 1, &out),
+              UDAF_ERR_INTERNAL);
     udaf_client_destroy(cli);
 }
 

@@ -90,7 +90,7 @@ std::vector<RegistryEntry> ServiceRegistry::snapshot() const noexcept {
     std::vector<RegistryEntry> out;
     std::shared_lock lock(mtx_);
     out.reserve(nodes_.size());
-    for (auto& [k, v] : nodes_) {
+    for (const auto& [k, v] : nodes_) {
         (void)k;
         out.push_back(v);
     }

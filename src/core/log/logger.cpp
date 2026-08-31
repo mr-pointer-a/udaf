@@ -89,6 +89,7 @@ Result<void> Logger::init(const LoggerConfig& config) noexcept {
     } catch (const std::exception& e) {
         // spdlog 抛异常表示路径无效等；CLAUDE.md §3.5 不允许异常，但 spdlog 内部会抛
         // 我们无法控制；只能吞咽并返回错误
+        // NOLINTNEXTLINE(cert-err33-c) - 失败时已无 stderr 可写，忽略返回值
         std::fprintf(stderr, "udaf::core::Logger init sink failed: %s\n", e.what());
         return Result<void>::err(ErrorCode::CONFIG_INVALID_VALUE);
     }
@@ -166,6 +167,7 @@ void Logger::log_with_error(LogLevel level, std::string_view msg, ErrorCode code
     const auto fmt = std::string(msg) + " | error_code=0x" +
         [&] {
             char buf[16];
+            // NOLINTNEXTLINE(cert-err33-c) - snprintf 返回值仅用于截断检测，此处不关注
             std::snprintf(buf, sizeof(buf), "%04X", static_cast<unsigned>(code));
             return std::string(buf);
         }() +

@@ -150,6 +150,14 @@ TEST(UdafCliRun, TooFewArgsUsage) {
     EXPECT_NE(cerr.str().find("用法"), std::string::npos);
 }
 
+// 覆盖 cli.cpp:186-187 cmd_trust 参数校验失败路径
+TEST(UdafCliTrust, UnknownSubcommandReturnsUsage) {
+    CerrRedirect cerr;
+    int rc = run_cmd("trust", {"bogus"});
+    EXPECT_EQ(rc, 1);  // kUsage
+    EXPECT_NE(cerr.str().find("用法"), std::string::npos);
+}
+
 TEST(UdafCliRun, MissingNodeFlagUsage) {
     CerrRedirect cerr;
     int rc = run_cmd("run", {"echo", "hi"});

@@ -44,7 +44,8 @@ enum class WalEntryType : std::uint8_t {
 };
 
 /// Wal::Entry 单条记录（字段尾下划线对齐 CLAUDE.md §2）。
-struct WalEntry {
+struct WalEntry {  // NOLINT(clang-analyzer-core.uninitialized.Assign)
+    // kSchemaVersion 是 static constexpr inline 变量，clang-analyzer 误报"未初始化"
     /// 与 03 §6.3.2 SCHEMA_VERSION 对齐（保持 ABI 兼容）。
     static constexpr std::uint32_t kSchemaVersion = 1;
 
@@ -121,7 +122,7 @@ public:
 
     /// 流式 replay（每条触发一次 callback，callback 返回 false 终止遍历）。
     /// @return Ok() / Err(SERIALIZE_VERSION_MISMATCH / IO)
-    [[nodiscard]] core::Result<void> replay_stream(WalCallback callback) noexcept;
+    [[nodiscard]] core::Result<void> replay_stream(const WalCallback& callback) noexcept;
 
     // ---------- 维护接口 ----------
 
@@ -162,6 +163,10 @@ private:
 
     /// 从 fd 当前位置读一条 Entry
     [[nodiscard]] core::Result<WalEntry> read_entry() noexcept;
+
+    /// 扫描文件中所有 entry，返回 (最大 seq, entry 数)。
+    /// 用于 read_file_header 中重算 next_seq。
+    [[nodiscard]] std::pair<std::uint64_t, std::uint64_t> scan_entries_for_max_seq() noexcept;
 
     WalConfig   config_;
     UniqueFd    fd_;

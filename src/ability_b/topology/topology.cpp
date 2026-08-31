@@ -47,7 +47,8 @@ void Topology::write_to_wal(const TxItem& /*it*/) noexcept {
     // 此处依赖外部注入 wal_
 }
 
-core::Result<void> Topology::commit(TopologyTransaction&& tx) noexcept {
+core::Result<void> Topology::commit(TopologyTransaction&& tx) noexcept {  // NOLINT(cppcoreguidelines-rvalue-reference-param-not-moved)
+    // 评审 M-12：右值引用语义上"消费"事务，防止重复提交；实际数据已复制到 nodes_/edges_
     if (tx.empty()) {
         return core::Result<void>::err(core::ErrorCode::INVALID_ARG);
     }
@@ -115,7 +116,7 @@ std::vector<PeerNode> Topology::nodes() const noexcept {
     std::lock_guard<std::mutex> lk(mtx_);
     std::vector<PeerNode> out;
     out.reserve(nodes_.size());
-    for (auto& [k, v] : nodes_) {
+    for (const auto& [k, v] : nodes_) {
         (void)k;
         out.push_back(v);
     }
@@ -126,7 +127,7 @@ std::vector<PeerEdge> Topology::edges() const noexcept {
     std::lock_guard<std::mutex> lk(mtx_);
     std::vector<PeerEdge> out;
     out.reserve(edges_.size());
-    for (auto& k : edges_) {
+    for (const auto& k : edges_) {
         auto p = k.find('|');
         if (p == std::string::npos) continue;
         out.push_back(PeerEdge{k.substr(0, p), k.substr(p + 1), ""});
@@ -151,11 +152,11 @@ bool Topology::has_cycle() const noexcept {
     std::unordered_set<std::string> stack;
     bool has = false;
     std::function<bool(const std::string&)> dfs = [&](const std::string& u) {
-        if (stack.count(u)) { has = true; return true; }
-        if (visited.count(u)) return false;
+        if (stack.contains(u)) { has = true; return true; }
+        if (visited.contains(u)) return false;
         visited.insert(u);
         stack.insert(u);
-        if (adj.count(u)) {
+        if (adj.contains(u)) {
             for (auto& v : adj[u]) {
                 if (dfs(v)) return true;
             }

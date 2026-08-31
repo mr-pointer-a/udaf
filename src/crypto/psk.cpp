@@ -46,7 +46,7 @@ hkdf_sha256(std::span<const std::uint8_t> salt,
             std::span<const std::uint8_t> ikm,
             std::string_view info,
             std::size_t out_length) noexcept {
-    if (out_length == 0 || out_length > 255 * 32) {
+    if (out_length == 0 || out_length > static_cast<std::size_t>(255) * 32) {
         return core::Result<SecretKey>::err(core::ErrorCode::INVALID_ARG);
     }
     if (ikm.empty()) {
@@ -133,7 +133,7 @@ psk_aead_encrypt(std::span<const std::uint8_t> key,
     if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, 12, nullptr) != 1) goto done;
     if (EVP_EncryptInit_ex(ctx, nullptr, nullptr, key.data(), nonce.data()) != 1) goto done;
     if (!aad.empty()) {
-        int tmp;
+        int tmp = 0;
         if (EVP_EncryptUpdate(ctx, nullptr, &tmp, aad.data(),
                                static_cast<int>(aad.size())) != 1) goto done;
     }
@@ -147,7 +147,8 @@ psk_aead_encrypt(std::span<const std::uint8_t> key,
     // 追加 16B tag
     if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, 16,
                              out.data() + out_len + final_len) != 1) goto done;
-    out.resize(static_cast<std::size_t>(out_len + final_len + 16));
+    out.resize(static_cast<std::size_t>(out_len) +
+               static_cast<std::size_t>(final_len) + 16U);
     ok = true;
 
 done:
@@ -181,7 +182,7 @@ psk_aead_decrypt(std::span<const std::uint8_t> key,
     if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, 12, nullptr) != 1) goto done;
     if (EVP_DecryptInit_ex(ctx, nullptr, nullptr, key.data(), nonce.data()) != 1) goto done;
     if (!aad.empty()) {
-        int tmp;
+        int tmp = 0;
         if (EVP_DecryptUpdate(ctx, nullptr, &tmp, aad.data(),
                                static_cast<int>(aad.size())) != 1) goto done;
     }
@@ -194,7 +195,8 @@ psk_aead_decrypt(std::span<const std::uint8_t> key,
     if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, 16,
                              const_cast<std::uint8_t*>(ciphertext.data()) + body) != 1) goto done;
     if (EVP_DecryptFinal_ex(ctx, out.data() + out_len, &final_len) != 1) goto done;
-    out.resize(static_cast<std::size_t>(out_len + final_len));
+    out.resize(static_cast<std::size_t>(out_len) +
+               static_cast<std::size_t>(final_len));
     ok = true;
 
 done:

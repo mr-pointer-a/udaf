@@ -34,7 +34,8 @@ AuthRequest deserialize_request(std::span<const std::uint8_t> buf) {
         req.salt.clear();
         return req;
     }
-    req.identity.assign(buf.begin() + 65, buf.begin() + 65 + id_len);
+    const auto id_begin = static_cast<std::ptrdiff_t>(65);
+    req.identity.assign(buf.begin() + id_begin, buf.begin() + id_begin + static_cast<std::ptrdiff_t>(id_len));
     return req;
 }
 

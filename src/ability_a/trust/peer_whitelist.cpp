@@ -30,7 +30,7 @@ PeerWhitelist::contains(std::string_view node_id,
     auto it = entries_.find(std::string(node_id));
     if (it == entries_.end()) return false;
     if (capability.empty()) return true;
-    return it->second.allowed_capabilities_.count(std::string(capability)) > 0;
+    return it->second.allowed_capabilities_.contains(std::string(capability));
 }
 
 core::Result<WhitelistEntry>

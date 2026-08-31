@@ -9,7 +9,7 @@ DiscoveryBridge::on_node_join(std::string node_id,
                               std::string bind_address,
                               std::uint16_t bind_port,
                               const std::vector<std::string>& services) noexcept {
-    if (!callbacks_) {
+    if (callbacks_ == nullptr) {
         return core::Result<void>::err(core::ErrorCode::INVALID_ARG);
     }
     udaf::bridge::NodeJoinEvent ev;
@@ -24,7 +24,7 @@ DiscoveryBridge::on_node_join(std::string node_id,
 
 core::Result<void>
 DiscoveryBridge::on_node_leave(std::string node_id) noexcept {
-    if (!callbacks_) {
+    if (callbacks_ == nullptr) {
         return core::Result<void>::err(core::ErrorCode::INVALID_ARG);
     }
     udaf::bridge::NodeLeaveEvent ev;
@@ -34,7 +34,7 @@ DiscoveryBridge::on_node_leave(std::string node_id) noexcept {
 }
 
 void DiscoveryBridge::on_node_heartbeat(std::string_view node_id) noexcept {
-    if (callbacks_) callbacks_->on_node_heartbeat(node_id);
+    if (callbacks_ != nullptr) callbacks_->on_node_heartbeat(node_id);
 }
 
 }  // namespace udaf::ability_a::bridge

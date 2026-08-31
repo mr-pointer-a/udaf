@@ -305,3 +305,41 @@ TEST(AbilityC_CmdExecNode, WorkerProcessesMultipleRequests) {
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
     EXPECT_TRUE(node.stop().is_ok());
 }
+
+// ===== 覆盖率补充（v0.3.14）=====
+
+// posix_spawnp 失败：可执行文件不存在 → 返回 INTERNAL 错误
+TEST(AbilityCExecutor, NonExistentExecutableReturnsError) {
+    ProcessExecutor::Options opts;
+    opts.executable = "/nonexistent/binary/path/that/does/not/exist";
+    opts.args = {"foo", "bar"};
+    // 必须将 nonexistent 路径加入白名单，否则在白名单检查阶段就被 BIZ_AUTH_UNTRUSTED 拒绝
+    // 无法触达 posix_spawnp 真实失败分支
+    opts.allowed_executables = {"/nonexistent/binary/path/that/does/not/exist"};
+    auto r = ProcessExecutor::execute(opts);
+    EXPECT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::INTERNAL);
+}
+
+// posix_spawnp 成功但命令退出非零 → 仍 Ok，exit_code 非零
+TEST(AbilityCExecutor, NonZeroExitCode) {
+    ProcessExecutor::Options opts;
+    opts.executable = "/bin/sh";
+    opts.args = {"-c", "exit 42"};
+    opts.allowed_executables = {"/bin/sh"};
+    auto r = ProcessExecutor::execute(opts);
+    ASSERT_TRUE(r.is_ok());
+    EXPECT_EQ(r.value().exit_code, 42);
+}
+
+// posix_spawnp 捕获 stderr 输出
+TEST(AbilityCExecutor, CapturesStderr) {
+    ProcessExecutor::Options opts;
+    opts.executable = "/bin/sh";
+    opts.args = {"-c", "echo error-message 1>&2"};
+    opts.allowed_executables = {"/bin/sh"};
+    auto r = ProcessExecutor::execute(opts);
+    ASSERT_TRUE(r.is_ok());
+    EXPECT_EQ(r.value().exit_code, 0);
+    EXPECT_NE(r.value().stderr_text.find("error-message"), std::string::npos);
+}

@@ -127,12 +127,12 @@ public:
         std::int64_t end_ns = 0;
     };
 
-    Span begin(std::string name) noexcept;
-    void end(Span& s) noexcept;
+    static Span begin(std::string name) noexcept;
+    static void end(Span& s) noexcept;
 
     /// KV 注入/提取（headers-style）
-    void inject(const Span& s, std::unordered_map<std::string, std::string>& kv) const noexcept;
-    [[nodiscard]] Span extract(std::string_view name,
+    static void inject(const Span& s, std::unordered_map<std::string, std::string>& kv) noexcept;
+    [[nodiscard]] static Span extract(std::string_view name,
                                 const std::unordered_map<std::string, std::string>& kv) noexcept;
 };
 

@@ -13,7 +13,7 @@ namespace udaf::ability_a::discovery {
 
 std::unique_ptr<Advertiser>
 Advertiser::create(AdvertisementPayload payload,
-                   AdvertiserConfig cfg,
+                   const AdvertiserConfig& cfg,
                    std::span<const std::uint8_t> psk) noexcept {
     auto a = std::unique_ptr<Advertiser>(new Advertiser());
     a->payload_ = std::move(payload);
