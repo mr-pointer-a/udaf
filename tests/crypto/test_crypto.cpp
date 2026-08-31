@@ -610,3 +610,65 @@ TEST(UdafCrypto, ClientFinalizeInvalidResponse) {
     auto r = cli->process_handshake(bad_resp);
     EXPECT_TRUE(r.is_err());
 }
+
+// ---------------- 14. TlsContext mode() / native_handle() 覆盖 ----------------
+
+TEST(UdafCrypto, TlsContextModeAndHandle) {
+    using Mode = TlsContext::Mode;
+    // 默认构造的 TlsContext pimpl_ == nullptr
+    TlsContext empty;
+    EXPECT_FALSE(empty.is_valid());
+    EXPECT_EQ(empty.mode(), Mode::ServerPki);  // 默认值（pimpl_==nullptr 分支）
+    EXPECT_EQ(reinterpret_cast<std::uintptr_t>(empty.native_handle()), 0u);  // 默认值
+
+    // create_psk ClientPsk
+    std::vector<std::uint8_t> psk(32, 0xBB);
+    auto ctx = TlsContext::create_psk(Mode::ClientPsk, psk, "client-id");
+    ASSERT_NE(ctx, nullptr);
+    EXPECT_EQ(ctx->mode(), Mode::ClientPsk);
+    EXPECT_NE(reinterpret_cast<std::uintptr_t>(ctx->native_handle()), 0u);
+}
+
+TEST(UdafCrypto, TlsContextMoveAssignment) {
+    using Mode = TlsContext::Mode;
+    std::vector<std::uint8_t> psk_a(32, 0xAA);
+    std::vector<std::uint8_t> psk_b(32, 0xBB);
+
+    auto a = TlsContext::create_psk(Mode::ServerPsk, psk_a, "a-id");
+    auto b = TlsContext::create_psk(Mode::ClientPsk, psk_b, "b-id");
+    ASSERT_NE(a, nullptr);
+    ASSERT_NE(b, nullptr);
+
+    auto a_handle_before = reinterpret_cast<std::uintptr_t>(a->native_handle());
+    auto b_handle_before = reinterpret_cast<std::uintptr_t>(b->native_handle());
+    ASSERT_NE(a_handle_before, 0u);
+    ASSERT_NE(b_handle_before, 0u);
+    ASSERT_NE(a_handle_before, b_handle_before);
+
+    // 移动赋值：a = std::move(b)
+    // 注意：b 是 unique_ptr，move 后 b 自身变 nullptr（不可访问 b->）
+    a = std::move(b);
+    EXPECT_EQ(b, nullptr);  // b 已 move-from
+    EXPECT_EQ(reinterpret_cast<std::uintptr_t>(a->native_handle()), b_handle_before);
+}
+
+TEST(UdafCrypto, TlsContextPskInvalidSizeReturnsNull) {
+    using Mode = TlsContext::Mode;
+    // 非 32 字节 PSK → create_psk 返回 nullptr（早返回）
+    std::vector<std::uint8_t> bad_psk(16, 0xCC);
+    auto ctx = TlsContext::create_psk(Mode::ServerPsk, bad_psk, "id");
+    EXPECT_EQ(ctx, nullptr);
+}
+
+TEST(UdafCrypto, TlsContextServerPkiInvalidCertReturnsNull) {
+    // 不存在的证书/私钥文件 → create_server_pki 返回 nullptr
+    auto srv = TlsContext::create_server_pki("/no/such/cert.pem",
+                                              "/no/such/key.pem");
+    EXPECT_EQ(srv, nullptr);
+}
+
+TEST(UdafCrypto, TlsContextClientPkiBadCaReturnsNull) {
+    // 不存在的 CA 文件 → create_client_pki 返回 nullptr
+    auto cli = TlsContext::create_client_pki("/no/such/ca.pem", "", "");
+    EXPECT_EQ(cli, nullptr);
+}

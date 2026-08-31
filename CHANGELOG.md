@@ -1,5 +1,28 @@
 # 变更日志
 
+## v0.3.11 (2026-08-31) - TlsContext 覆盖率补充
+
+### 新增
+
+- **tests/crypto/test_crypto.cpp**：5 项 TlsContext 测试
+  - TlsContextModeAndHandle：默认构造 + pimpl_==nullptr 分支 + 模式查询 + 原生 handle
+  - TlsContextMoveAssignment：移动赋值正确性（含 unique_ptr 行为）
+  - TlsContextPskInvalidSizeReturnsNull：非 32 字节 PSK 拒绝
+  - TlsContextServerPkiInvalidCertReturnsNull：证书/私钥不存在 → nullptr
+  - TlsContextClientPkiBadCaReturnsNull：CA 文件不存在 → nullptr
+
+### 修复
+
+- **tests/crypto/test_crypto.cpp**：TlsContextMoveAssignment 段错误
+  - unique_ptr move-from 后自身变为 nullptr，不能再访问 b->
+
+### 指标
+
+- tls_context.cpp 行覆盖率：70.3% → 74.3%
+- 测试数：401 → 406 (+5)
+
+---
+
 ## v0.3.10 (2026-08-31) - UDP 覆盖率补充
 
 ### 新增
