@@ -1,6 +1,6 @@
 # 概要设计（Phase 3）
 
-> **状态**：v2.1（性能契约 24→29 项，对齐架构 §3.4 v2.8）
+> **状态**：v2.2（性能契约 29→33 项，对齐架构 §3.4 v2.9）
 > **日期**：2026-08-28
 > **前置**：[`docs/01-requirements.md`](01-requirements.md) v1.0 + [`docs/02-architecture.md`](02-architecture.md) v2.8
 > **响应阶段 2**：模块划分 + 接口定义 + 错误码体系 + 跨模块调用链 + 测试矩阵
@@ -19,7 +19,7 @@
 3. **测试用例清单**：每个公共 API 至少 3 个测试用例（正面 + 负面 + 边界）
 4. **跨模块协作调用链**：A 注册表变化 → bridge → B 拓扑更新 → spawn / kill → WAL 持久化 → 白名单校验的完整链路
 5. **错误码国际化字符串映射**：10 大类错误的中英文消息映射表 + CLI 退出码
-6. **性能契约 → 基准测试映射**：架构 §3.4 的 29 项性能契约 → benchmark 入口
+6. **性能契约 → 基准测试映射**：架构 §3.4 的 33 项性能契约 → benchmark 入口
 
 ### 1.2 模块层次总览（与架构 §2.1 六层对齐）
 
@@ -3461,7 +3461,7 @@ sequenceDiagram
 
 ## 11. 性能契约 → 基准测试映射
 
-> **权威源**：[`docs/02-architecture.md`](02-architecture.md) §3.4 第 222-247 行 **29 项**性能契约。
+> **权威源**：[`docs/02-architecture.md`](02-architecture.md) §3.4 第 222-256 行 **33 项**性能契约。
 > 本节为阶段 3 实现层落地：每项契约给出 benchmark 入口、对应模块与测量方法，**严格 1:1 对齐架构 §3.4，不引入 §3.4 之外的自拟指标**。
 >
 > **阶段 4 之前必读**：ADR-003 §5.3 Flash 写入预算存在已知数据复算问题（见 §11.3），不阻塞本阶段通过。
@@ -3474,7 +3474,7 @@ sequenceDiagram
 - **内存**：PSS（Proportional Set Size），使用 smem 或 /proc/[pid]/smaps
 - **CPU**：单核 1s 采样率，使用 /proc/[pid]/stat
 
-### 11.2 29 项性能契约对照表
+### 11.2 33 项性能契约对照表
 
 | # | 性能契约 | 架构 §3.4 阈值 | benchmark 入口 | 对应模块 | 测量方法 |
 |---|---------|---------------|----------------|---------|---------|
@@ -3507,6 +3507,10 @@ sequenceDiagram
 | 27 | 审计日志写入吞吐 | **≥ 1000 条/秒** | `udaf_bench audit_write_throughput` | audit::Logger（异步刷盘） | 60s 持续写入 |
 | 28 | 设备端峰值内存 | **< 16MB** | `udaf_bench device_peak_memory` | 全模块（运行时峰值） | PSS 峰值 |
 | 29 | 主机端峰值内存 | **< 128MB** | `udaf_bench host_peak_memory` | 全模块（运行时峰值） | PSS 峰值 |
+| 30 | AEAD 大块吞吐 | **≥ 200 MB/s** | `udaf_bench aead_throughput_1mb` | crypto::psk（HKDF + AES-GCM） | 1 MiB 帧 / 秒 |
+| 31 | 审计 hash chain 全链校验 | **≤ 100ms / 500 条** | `udaf_bench audit_verify_chain` | audit::Logger（SHA-512 hash chain） | verify_chain 单次耗时 |
+| 32 | WAL append+replay 完整链路 | **≤ 50ms / 200 条** | `udaf_bench wal_replay_full` | platform::fs::Wal（schema 头 + fsync） | append 200 + replay 全链 |
+| 33 | 拓扑事务批量 commit | **≤ 100ms / 50 节点** | `udaf_bench topology_commit_50` | TopologyTransaction | 50 节点 commit 总耗时 |
 
 ### 11.3 已知问题（待阶段 4 修正）
 
@@ -3837,3 +3841,4 @@ protected:
 | v1.9 | 2026-08-27 | **全文档最终扫描修复（hash chain 完整性）**：§10.6 时序图中全部 17 处 `append(AuditEvent)` 补 `prev_hash=last_hash_`，覆盖埋点 1~9 全部 ActionType（WHITELIST_CHANGE / AUTH_EVENT / NODE_START / NODE_STOP / SCHEDULE_REQUEST / CMD_EXEC / FILE_PUSH|PULL / DEVICE_OFFLINE / DEVICE_INFO_CHANGE / NETWORK_CHANGE / CHANNEL_SEND / CHANNEL_RECV / CRYPTO_INIT / CRYPTO_DONE / SERIALIZE_ENCODE / SERIALIZE_DECODE / HEARTBEAT），确保 hash chain 审计链完整闭合 |
 | v2.0 | 2026-08-27 | ErrorCode 去重：§8.1/§8.2/§8.3 删除内联 ErrorCode 枚举/kErrorMessages/UDAFExitCode 定义，改为引用 ADR-011（单一权威源）；状态头修正 v1.6 → v2.0 |
 | v2.1 | 2026-08-28 | **§11 性能契约 24→29 项**：①§11 权威源说明"24 项"→"29 项"；②§1.1 第 6 条"24 项"→"29 项"；③§11.2 标题"24 项"→"29 项"；④新增 #25 命令往返延迟 P99 < 15ms；⑤新增 #26 加密性能开销（吞吐损失）< 20%；⑥新增 #27 审计日志写入吞吐 ≥ 1000 条/秒；⑦新增 #28 设备端峰值内存 < 16MB；⑧新增 #29 主机端峰值内存 < 128MB；⑨对齐架构 §3.4 v2.8 + 05-test-plan v0.6 §5.5.1；⑩§14.2 评审追踪表追加"性能契约 29 项 → benchmark 1:1" |
+| v2.2 | 2026-09-01 | **§11 性能契约 29→33 项（v0.3.13 实现新增）**：①§11 权威源说明"29 项"→"33 项"；②§11.2 标题"29 项"→"33 项"；③新增 #30 AEAD 大块吞吐 ≥ 200 MB/s；④新增 #31 审计 hash chain 全链校验 ≤ 100ms/500 条；⑤新增 #32 WAL append+replay 完整链路 ≤ 50ms/200 条；⑥新增 #33 拓扑事务批量 commit ≤ 100ms/50 节点；⑦对齐架构 §3.4 v2.9 + 05-test-plan v0.8 |

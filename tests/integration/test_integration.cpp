@@ -264,5 +264,120 @@ TEST(Integration_S10_6, SdkClientFullChain) {
     std::filesystem::remove(tmp, ec);
 }
 
+// ============ #S10_7 白名单拒绝（未授权设备跨主机调度被拒）============
+// 验证：trust_list 不存在的节点 → run_remote 应被拒绝（不抛异常，返回 Err）
+TEST(Integration_S10_7, WhitelistRejectionOnUntrustedNode) {
+    auto tmp = std::filesystem::temp_directory_path() /
+               ("udaf_int_s107_" + std::to_string(::getpid()) + ".log");
+    std::error_code ec; std::filesystem::remove(tmp, ec);
+
+    udaf::sdk::ClientConfig cfg;
+    cfg.node_id = "int-host-s107";
+    cfg.audit_path = tmp.string();
+
+    udaf::sdk::Client client(cfg);
+    ASSERT_TRUE(client.start().is_ok());
+
+    // 信任列表为空时调用 run_remote → 必须被拒绝
+    auto r = client.run_remote("untrusted-device-99",
+                                "echo", std::vector<std::string>{"hello"});
+    EXPECT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::BIZ_AUTH_UNTRUSTED);
+
+    EXPECT_TRUE(client.stop().is_ok());
+    std::filesystem::remove(tmp, ec);
+}
+
+// ============ #S10_8 审计 hash chain 写入与回放校验 ============
+// 验证：写入 N 条事件 → 重新打开 AuditLogger → verify_chain() 应返回 true
+TEST(Integration_S10_8, AuditChainWriteAndVerify) {
+    using udaf::audit::AuditLogger;
+    using udaf::audit::ActionType;
+
+    auto path = std::filesystem::temp_directory_path() /
+                ("udaf_int_s108_" + std::to_string(::getpid()) + ".log");
+    std::error_code ec; std::filesystem::remove(path, ec);
+
+    // 阶段 1：写入 100 条混合事件
+    {
+        AuditLogger logger(path.string());
+        for (int i = 0; i < 100; ++i) {
+            ActionType a = (i % 3 == 0) ? ActionType::NodeHeartbeat
+                           : (i % 3 == 1) ? ActionType::ServicePublish
+                                          : ActionType::CmdExec;
+            auto r = logger.append(a, "actor-" + std::to_string(i % 5),
+                                  "target-" + std::to_string(i % 7),
+                                  "{\"i\":" + std::to_string(i) + "}");
+            ASSERT_TRUE(r.is_ok());
+        }
+        EXPECT_EQ(logger.sequence(), 100u);
+        // 文件应已被创建且非空
+        EXPECT_TRUE(std::filesystem::exists(path));
+        EXPECT_GT(std::filesystem::file_size(path), 0u);
+    }
+
+    // 阶段 2：重开 logger → verify_chain 全链校验
+    // 注：sequence() 不从文件 reload（按设计，仅 in-memory 跟踪）；
+    // verify_chain() 读取整个文件验证 hash 链接性
+    {
+        AuditLogger logger2(path.string());
+        auto v = logger2.verify_chain();
+        ASSERT_TRUE(v.is_ok());
+        EXPECT_TRUE(v.value());
+    }
+    std::filesystem::remove(path, ec);
+}
+
+// ============ #S10_9 错误恢复：写入后 truncate 后 replay 完整性 ============
+// 验证：WAL 写入 N 条 → truncate(keep) → replay 应返回 keep 条且 sequence 单调
+TEST(Integration_S10_9, ErrorRecoveryWalTruncateAndReplay) {
+    using udaf::platform::fs::Wal;
+    using udaf::platform::fs::WalConfig;
+    using udaf::platform::fs::WalEntryType;
+
+    auto path = std::filesystem::temp_directory_path() /
+                ("udaf_int_s109_" + std::to_string(::getpid()) + ".wal");
+    std::error_code ec; std::filesystem::remove(path, ec);
+
+    WalConfig cfg;
+    cfg.path_ = path;
+    cfg.fsync_on_append_ = false;
+
+    // 写 50 条
+    {
+        auto w = Wal::create(cfg);
+        ASSERT_TRUE(w.is_ok());
+        auto& wal = *w.value();
+        std::vector<std::uint8_t> payload(32, 0xEE);
+        for (int i = 0; i < 50; ++i) {
+            auto r = wal.append(WalEntryType::CUSTOM, "test", payload);
+            ASSERT_TRUE(r.is_ok());
+        }
+    }
+    // 截断保留 sequence >= 30（含）
+    {
+        auto w = Wal::create(cfg);
+        ASSERT_TRUE(w.is_ok());
+        auto trunc = w.value()->truncate(30);
+        ASSERT_TRUE(trunc.is_ok());
+    }
+    // replay：剩 21 条（30~50），sequence 单调递增
+    {
+        auto w = Wal::create(cfg);
+        ASSERT_TRUE(w.is_ok());
+        auto r = w.value()->replay();
+        ASSERT_TRUE(r.is_ok());
+        const auto& entries = r.value();
+        ASSERT_EQ(entries.size(), 21u);
+        EXPECT_EQ(entries.front().seq_, 30u);
+        EXPECT_EQ(entries.back().seq_, 50u);
+        // sequence 单调性
+        for (std::size_t i = 1; i < entries.size(); ++i) {
+            EXPECT_GT(entries[i].seq_, entries[i - 1].seq_);
+        }
+    }
+    std::filesystem::remove(path, ec);
+}
+
 #include <filesystem>
 #include <unistd.h>

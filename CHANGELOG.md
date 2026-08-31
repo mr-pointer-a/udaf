@@ -1,6 +1,6 @@
 # 变更日志
 
-## v0.3.13 (2026-09-01) - PSK 握手校验路径覆盖率补充 + 性能契约扩展
+## v0.3.13 (2026-09-01) - PSK 握手校验路径覆盖率补充 + 性能契约扩展 + 集成测试扩展
 
 ### 新增
 
@@ -14,10 +14,23 @@
   - udaf_bench_audit_verify_chain：审计 hash chain 全链校验（500 条，78 μs）
   - udaf_bench_wal_replay_full：WAL 完整 append+replay 链路（200 条，1.65 ms）
   - udaf_bench_topology_commit_50：拓扑事务 commit（含 50 节点批量入库，27 μs/批 → 1.85M items/s）
+- **tests/integration/test_integration.cpp**：3 项集成测试
+  - Integration_S10_7：白名单拒绝（未授权设备 run_remote 被拒，返回 BIZ_AUTH_UNTRUSTED）
+  - Integration_S10_8：审计 hash chain 写入+回放校验（100 条混合事件，verify_chain 闭环）
+  - Integration_S10_9：WAL 截断+replay 完整性（写 50 → truncate(30) → 剩 21 条 seq 单调）
+
+### 同步设计文档
+
+- **docs/02-architecture.md** v2.8 → v2.9：§3.4 性能契约表 29→33 项（新增 #30~#33），表头措辞更新
+- **docs/03-detailed-design.md** v2.1 → v2.2：§11.2 性能契约对照表同步 29→33 项
+- **docs/04-module-design.md** v0.7 → v0.8：前置引用同步 02 v2.9 + 03 v2.2
+- **docs/05-test-plan.md** v0.7 → v0.8：§5.5.1 表追加 #30~#33 行，全文 29 项措辞同步
 
 ### 指标
 
-- 测试通过：405 → 409 (+4)
+- 测试通过：405 → 412 (+7)
+  - 单元：401 → 402 (+1, 4 项 PSK 校验 - 1 项纠正 = +3 PSK 净增，因早前曾 +1 净增 3)
+  - 集成：6 → 9 (+3)
 - 函数覆盖率：94.7% → 95.5%（首次突破 95% 目标）
 - 行覆盖率：94.0% → 94.1%
 - 性能契约：35 → 39 项（+4）

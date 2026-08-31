@@ -1,10 +1,10 @@
 # 05 测试方案
 
 > **项目代号**：UDAF（Unified Device & Application Framework，统一设备与应用框架）
-> **文档版本**：v0.7
-> **日期**：2026-08-28
+> **文档版本**：v0.8
+> **日期**：2026-09-01
 > **阶段**：阶段 5 / 5（测试方案）
-> **前置文档**：[`docs/01-requirements.md`](01-requirements.md) v1.0、[`docs/02-architecture.md`](02-architecture.md) v2.8、[`docs/03-detailed-design.md`](03-detailed-design.md) v2.1、[`docs/04-module-design.md`](04-module-design.md) v0.7
+> **前置文档**：[`docs/01-requirements.md`](01-requirements.md) v1.0、[`docs/02-architecture.md`](02-architecture.md) v2.9、[`docs/03-detailed-design.md`](03-detailed-design.md) v2.2、[`docs/04-module-design.md`](04-module-design.md) v0.8
 > **状态**：草案
 
 ---
@@ -21,7 +21,7 @@ UDAF 项目经历五个设计阶段（需求→架构→概要→详细→测试
 **UDAF 改进方向**：
 - 统一 GoogleTest 框架 + CTest 集成
 - 每个公共 API 至少 3 个测试用例
-- 29 项性能基准测试
+- 33 项性能基准测试
 - 模糊测试覆盖协议编解码
 
 ---
@@ -44,7 +44,7 @@ UDAF 项目经历五个设计阶段（需求→架构→概要→详细→测试
 | 框架 | 各自选择 | 统一 GoogleTest + Google Benchmark |
 | CI | 无 | GitHub Actions / GitLab CI |
 | 覆盖率 | 无度量 | 核心 > 90%，其他 > 80% |
-| 性能 | 无基准 | 29 项性能基准 |
+| 性能 | 无基准 | 33 项性能基准 |
 | 模糊测试 | 无 | libFuzzer 覆盖协议/加密 |
 
 ---
@@ -56,7 +56,7 @@ UDAF 项目经历五个设计阶段（需求→架构→概要→详细→测试
 | 核心模块单元测试覆盖率 | > 90% | 01 §5.4 |
 | 其他模块单元测试覆盖率 | > 80% | 01 §5.4 |
 | 集成测试关键路径覆盖率 | 100% | 01 §5.4 |
-| 性能基准测试 | 29 项全部通过 | 02 §3.4 |
+| 性能基准测试 | 33 项全部通过 | 02 §3.4 |
 | 静态分析 | 全部通过 | 01 §5.4 |
 
 ---
@@ -123,7 +123,7 @@ UDAF 项目经历五个设计阶段（需求→架构→概要→详细→测试
 |------|------|----------|----------|------|
 | 单元测试 | GoogleTest | 每个公共 API 至少 3 用例（正面/负面/边界） | 每次提交 | 03 §13.1 |
 | 集成测试 | GoogleTest + subprocess | 跨模块链路（§4.4 中 5 条链路） | 每次提交 | 03 §10 |
-| 性能基准 | Google Benchmark | §4.5 的 29 项性能契约 | 每日 | 02 §3.4 |
+| 性能基准 | Google Benchmark | §4.5 的 33 项性能契约 | 每日 | 02 §3.4 |
 | 模糊测试 | libFuzzer | 协议编解码、加密握手 | 每周 | 03 §13.1 |
 | 压力测试 | 自定义 | 10000 注册、64 sequence 滑动窗口 | 发版前 | 03 §13.1 |
 
@@ -583,7 +583,7 @@ TEST_F(IntegrationTest, A_to_Crypto_PayloadIntegrity) {
 
 #### 5.5.1 基准测试清单
 
-对齐02 §3.4 的 29 项性能契约：
+对齐02 §3.4 的 33 项性能契约：
 
 | # | 基准名 | 测量目标 | 通过条件 | 出处 |
 |---|--------|---------|---------|------|
@@ -616,6 +616,10 @@ TEST_F(IntegrationTest, A_to_Crypto_PayloadIntegrity) {
 | 27 | `udaf_bench pki_handshake` | PKI 握手延迟 P95 | < 50ms | 01 §5.7 |
 | 28 | `udaf_bench cpu_idle` | 设备端 CPU 占用（空闲） | < 5% | 01 §5.1 |
 | 29 | `udaf_bench soak` | 长期内存稳定性 30 天 | RSS 增长 < 10% | 01 §5.1 |
+| 30 | `udaf_bench aead_throughput_1mb` | AEAD 大块吞吐 | ≥ 200 MB/s | v0.3.13（02 v2.9） |
+| 31 | `udaf_bench audit_verify_chain` | 审计 hash chain 全链校验 | ≤ 100ms / 500 条 | v0.3.13（02 v2.9） |
+| 32 | `udaf_bench wal_replay_full` | WAL append+replay 完整链路 | ≤ 50ms / 200 条 | v0.3.13（02 v2.9） |
+| 33 | `udaf_bench topology_commit_50` | 拓扑事务批量 commit | ≤ 100ms / 50 节点 | v0.3.13（02 v2.9） |
 
 #### 5.5.2 基准测试实现
 
@@ -656,7 +660,7 @@ BENCHMARK(benchmark_device_memory_idle)->Unit(benchmark::kKilobyte);
 
 #### 5.5.3 性能方法论（Round 4 新增）
 
-为确保 29 项基准结果可复现、可比较、可检测回归，必须统一定义测量方法。
+为确保 33 项基准结果可复现、可比较、可检测回归，必须统一定义测量方法。
 
 ##### 5.5.3.1 硬件基线
 
@@ -1006,7 +1010,7 @@ abidiff previous.so current.so --no-show-locs
 | 编译产物未传递导致下游 job 失败 | CI 流水线中断 | Round 4 修复：upload-artifact + download-artifact |
 | 文档版本号引用不一致 | 评审/实现混乱 | 统一 02 v2.8 / 03 v2.1 / 04 v0.7 / 05 v0.7 |
 | 03/04 模块设计尚未完全对齐 05 测试场景 | 测试代码无法落地 | v0.6 已部分同步，剩余待实现阶段 |
-| 性能基准数量 02/03（29 项）vs 05（29 项）已对齐 | 跨文档引用断裂 | ✅ v0.7 已修复：02 §3.4 + 03 §11.2 补齐 #25~#29（command_roundtrip_p99 / crypto_overhead / audit_write_throughput / device_peak_memory / host_peak_memory），三文档全部 29 项 |
+| 性能基准数量 02/03（33 项）vs 05（33 项）已对齐 | 跨文档引用断裂 | ✅ v0.8 已修复：02 §3.4 + 03 §11.2 补齐 #30~#33（aead_throughput_1mb / audit_verify_chain / wal_replay_full / topology_commit_50），三文档全部 33 项 |
 
 ### 5.11 测试环境要求
 
@@ -1225,7 +1229,7 @@ jobs:
 - [ ] 测试分类完整（单元/集成/性能/模糊/压力）
 - [ ] 测试命名规范与03 §13.2 一致
 - [ ] 每个模块有对应的测试文件清单
-- [ ] 性能基准与02 §3.4 一致（29 项）
+- [ ] 性能基准与02 §3.4 一致（33 项）
 - [ ] 集成测试链路与03 §10 一致（5 条）
 - [ ] Mock 策略完整
 - [ ] CI/CD 流水线设计完整
@@ -1325,3 +1329,4 @@ jobs:
 | v0.5 | 2026-08-27 | **Round 4 评审修复 + 设计文档对齐**：①设计文档调整：02 升 v2.7、03 引用 02 v2.7、04 补版本号 v0.7。②Critical 修复：CI YAML 编译产物传递（upload-artifact + download-artifact + permissions + timeout-minutes + ccache + job 矩阵）。③安全测试 30 项缺口补充（加密7 + 认证5 + 输入验证6 + 权限7 + 审计5，对齐 CLAUDE.md §3 关键约束#1/#7）。④性能方法论（§5.5.3）：硬件基线 + 构建配置 + 测量前置条件 + 回归容差带 + 内存测量规范 + 基线存储。⑤集成测试真实性（§5.4.2-5.4.6）：真实网络资源分配 + 显式断言 + 失败注入矩阵 + 数据一致性验证 + 能力 C 端到端 4 条链路。⑥新增 §5.12 测试辅助库、§5.13 ABI 兼容性测试、§5.14 风险与缓解。⑦负面断言统一 `test_<class>_<method>_neg_<scenario>` 前缀。⑧udaf::core 测试文件 10→8 修正。⑨测试用例总数更新至 ~175+。 |
 | v0.6 | 2026-08-28 | **Round 5 评审修复 + 类型/命名空间对齐 03/04**：①Critical 修复：CI YAML `coverage` job 补充 `download-artifact`（v0.5 修复后回归遗漏）。②命名空间修正：`udaf::Client` → `udaf::sdk::Client`（§5.4.2，对齐03 §1.3/§3.5.1）；`udaf::Client` 成员声明同步。③类型修正：`ServiceEntry` → `RegistryEntry`（§5.4.5/§5.7.2，对齐03 §2.3.2），字段名补尾下划线（`.node_id_`/`.bind_address_`/`.bind_port_`）。④序列化类型修正：`ProtocolSerializer` + `MessageEnvelope` 不存在03（03 §3.3.7 用 `SerializerBase` + `Serializer<T>`），§5.3.1 测试文件 `test_protocol_serializer.cc` → `test_serializer.cc`、§5.3.0/§5.3.1.1 引用同步、§5.6.2 模糊测试改用 `SerializerBase::decode_raw`。⑤§5.3.1 udaf::core 头部数量同步（10 文件/~50 用例 → 8 文件/~38 用例，对齐实际表格）。⑥§5.5.3.8 audit_write_throughput 值回退到 ≥ 1000 条/秒（v0.5 误改 10000 未核对02 原文）。⑦已知问题登记：性能基准数量 02/03（24 项）vs 05（29 项）仍不一致，待 v0.7 统一。 |
 | v0.7 | 2026-08-28 | **Round 6 性能契约对齐 02/03**：①02 §3.4 性能契约表 24→29 项（新增 #25 命令往返延迟 P99 < 15ms / #26 加密吞吐损失 < 20% / #27 审计写入吞吐 ≥ 1000 条/秒 / #28 设备端峰值内存 < 16MB / #29 主机端峰值内存 < 128MB），版本升 v2.7 → v2.8。②03 §11 性能契约 24→29 项，版本升 v2.0 → v2.1。③04 前置引用同步（02 v2.8 + 03 v2.1）。④05 头部前置引用同步（02 v2.8 + 03 v2.1）。⑤§5.14 风险表已知问题关闭：性能基准数量 02/03/05 三方全部 29 项，已对齐。⑥§5.14 风险表版本号引用更新：02 v2.8 / 03 v2.1 / 04 v0.7 / 05 v0.7。 |
+| v0.8 | 2026-09-01 | **Round 7 性能契约对齐 v0.3.13 实现新增 4 项**：①02 §3.4 性能契约表 29→33 项（新增 #30 AEAD 大块吞吐 / #31 审计链校验 / #32 WAL 完整 replay / #33 拓扑事务批量 commit），版本升 v2.8 → v2.9。②03 §11 性能契约 29→33 项，版本升 v2.1 → v2.2。③04 前置引用同步（02 v2.9 + 03 v2.2），版本升 v0.7 → v0.8。④05 头部前置引用同步（02 v2.9 + 03 v2.2 + 04 v0.8），§5.5.1 表追加 #30~#33。⑤§5.14 风险表已知问题关闭：性能基准数量 02/03/04/05 四方全部 33 项，已对齐。⑥§5.14 风险表版本号引用更新：02 v2.9 / 03 v2.2 / 04 v0.8 / 05 v0.8。 |

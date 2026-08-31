@@ -1,9 +1,9 @@
 # 详细设计（Phase 4）
 
-> **版本**：v0.7
+> **版本**：v0.8
 > **状态**：草稿
-> **日期**：2026-08-27
-> **前置**：[`docs/03-detailed-design.md`](03-detailed-design.md) v2.1 + [`docs/02-architecture.md`](02-architecture.md) v2.8
+> **日期**：2026-09-01
+> **前置**：[`docs/03-detailed-design.md`](03-detailed-design.md) v2.2 + [`docs/02-architecture.md`](02-architecture.md) v2.9
 
 ---
 
@@ -1185,3 +1185,5 @@ struct PortInfo {
 | v0.4 | 2026-08-27 | 第三轮review修复：Result<T>歧义构造函数显式=delete；Result<void>添加err()工厂方法；Transaction移动构造/赋值修正（防止双重回滚terminate）；Channel::send添加socket_mutex_加锁和ETERM/EFSM/EINTR错误处理；Advertiser::stop使用条件变量立即唤醒；UniqueFd的close/reset添加EINTR处理；注释修正（defer_lock改为立即加锁） |
 | v0.5 | 2026-08-27 | ErrorCode 对齐 ADR-011：§2.1.2 删除内联枚举定义改为引用 ADR-011；代码中 ErrorCode 命名从 kPascalCase 改为 SCREAMING_SNAKE（对齐 ADR-011 §2.3）；新增 NET_SEND_FAILED/NET_NOT_CONNECTED/TOPOLOGY_TRANSACTION_ALREADY_DONE 三个错误码 |
 | v0.6 | 2026-08-27 | 对齐03（概要设计）权威定义：Transaction→TopologyTransaction（独立类）；commit()→commit(TopologyTransaction&& tx)（右值引用防重复提交）；add_edge/remove_edge→connect/disconnect；Topology 新增 Wal& wal_ 成员；删除 Wal::Entry 重复定义；前置引用03版本号修正 v1.9→v2.0 |
+| v0.7 | 2026-08-28 | 同步上游 02 v2.8 + 03 v2.1：§2.3 Topology 性能契约 #25~#29 责任模块对齐；§2.5 Channel 性能契约 #5/#7/#10 责任模块对齐；§2.11 CmdExecNode 性能契约 #9/#12 责任模块对齐 |
+| v0.8 | 2026-09-01 | 同步上游 02 v2.9 + 03 v2.2：§2.3 Topology 性能契约 #33 拓扑事务批量 commit 责任模块对齐；§2.5 Channel §2.11 与新增 #30/#31/#32 性能契约责任模块对齐 |
