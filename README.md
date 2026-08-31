@@ -9,23 +9,23 @@
 
 ## 项目状态
 
-**当前版本**：v0.2.0（2026-08-30）
+**当前版本**：v0.3.11（2026-08-31）
 
 五大设计文档全部完成（v1.0 / v2.8 / v2.1 / v0.7 / v0.7），一致性 100% 对齐。
-**11 个核心模块全部实现**，**252 个测试全部通过**，**覆盖率 85.8% lines / 88.1% functions**。
+**11 个核心模块全部实现**，**406 个测试全部通过**（393 单元 + 6 集成 + 1 基准 + 1 模糊 + 5 端到端），**覆盖率 94.0% lines / 94.7% functions**。
 
 | 阶段 | 内容 | 状态 | 测试 |
 |---|---|---|---|
 | 阶段 0 | 仓库骨架 + CMake + CI + deb 打包 | ✅ | - |
 | 阶段 A | `udaf::core` + `udaf::platform::fs` | ✅ | 38 |
-| 阶段 B | `udaf::crypto` + A 基础层 | ✅ | 36 |
-| 阶段 C | 能力 B 数据流层（5 模块） | ✅ | 22 |
-| 阶段 D | A 完整层 + 能力 C | ✅ | 22 |
-| 阶段 E | 顶层 SDK + CLI（4 模块） | ✅ | 31 |
+| 阶段 B | `udaf::crypto` + A 基础层 | ✅ | 70 |
+| 阶段 C | 能力 B 数据流层（5 模块） | ✅ | 60 |
+| 阶段 D | A 完整层 + 能力 C | ✅ | 75 |
+| 阶段 E | 顶层 SDK + CLI（4 模块） | ✅ | 130 |
 | 集成 | §10.x 跨模块链路 | ✅ | 6 |
 | Fuzz | ASan+UBSan 20 万轮 | ✅ | 0 崩溃 |
 
-**25 项性能契约**：在 `build-bench/bench/udaf_bench` 中完整覆盖（#5/#7/#10/#11/#13/#14/#15/#16/#17/#20/#21/#22/#23/#24/#26 等）。
+**29 项性能契约**：在 `build-release/bench/udaf_bench` 中完整覆盖（吞吐 / 延迟 / 心跳优先级 / fork+exec / 节点冷启动 / 内存峰值等）。
 
 ---
 
@@ -92,23 +92,23 @@ lcov --remove coverage.info '/usr/*' '*/tests/*' '*/_deps/*' \
 genhtml coverage.info --output-directory coverage_html
 ```
 
-当前覆盖率：**85.8% lines / 88.1% functions**。
+当前覆盖率：**94.0% lines / 94.7% functions**（401 单元 + 6 集成 + 1 基准 + 1 模糊测试）。
 
 ### 性能基准
 
 ```bash
-cmake -B build-bench -DCMAKE_BUILD_TYPE=Release -DUDAF_ENABLE_BENCH=ON
-cmake --build build-bench -j$(nproc)
-./build-bench/bench/udaf_bench --benchmark_min_time=1x
+cmake -B build-release -DCMAKE_BUILD_TYPE=Release -DUDAF_ENABLE_BENCH=ON
+cmake --build build-release -j$(nproc)
+./build-release/bench/udaf_bench --benchmark_min_time=1x
 ```
 
-25 项 Google Benchmark 覆盖吞吐 / 延迟 / 心跳优先级 / fork+exec / 节点冷启动等契约。
+29 项 Google Benchmark 覆盖吞吐 / 延迟 / 心跳优先级 / fork+exec / 节点冷启动 / 内存峰值等契约。
 
 ### 打包（deb）
 
 ```bash
 bash scripts/make_deb.sh
-sudo dpkg -i build-deb/udaf-0.2.0-Linux.deb
+sudo dpkg -i build-deb/udaf-0.3.11-Linux.deb
 udaf version
 ```
 
@@ -140,7 +140,7 @@ ctest --test-dir build-asan -R fuzz --output-on-failure
 | `build-release` | push/PR | Release + 全部模块 |
 | `static-analysis` | push/PR | clang-tidy + cppcheck |
 | `test` | needs build-debug | ctest |
-| `benchmark` | needs build-release | 25 项 Google Benchmark |
+| `benchmark` | needs build-release | 29 项 Google Benchmark |
 | `coverage` | needs test | lcov + genhtml + Codecov 上传 |
 | `fuzz` | schedule（周日 2AM） | ASan + 20 万轮 harness |
 | `stress` | tag 触发 | 长时间稳定性 |
@@ -160,7 +160,7 @@ ctest --test-dir build-asan -R fuzz --output-on-failure
 | 能力 B 数据流 | `udaf::ability_b::serialization/port/transport/topology/node` | `Serializer<T>`、`Channel<T>`、`Topology`、`Node`、`Scheduler` |
 | 能力 C 节点 | `udaf::ability_c::nodes/executor/messages` | `CmdExecNode`、`HeartbeatNode`、`FileXferNode`、`NetInfoNode`、`ProcessExecutor` |
 | 顶层 SDK | `udaf::sdk::sdk/sdk::udaf_c` | `Client`(PIMPL)、`udaf_client_*`(13 函数) |
-| CLI | `udaf::cli` | 9 个实装子命令 |
+| CLI | `udaf::cli` | 14 个实装子命令 |
 | 审计 | `udaf::audit` | `AuditLogger`（SHA-512 hash chain） |
 | 可观测性 | `udaf::observability` | `Meter`（10 项内置指标）、`Tracer`、`Prometheus exporter` |
 | 中间桥 | `udaf::bridge` | `TopologyUpdateCallbacks`（纯抽象接口） |
@@ -231,5 +231,6 @@ MIT — 详见 [`LICENSE`](LICENSE)。
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| v0.3.11 | 2026-08-31 | 11 模块全部实现 / 406 测试通过 / 94.0% lines 覆盖 / 29 项性能契约 / deb 打包 / CI 8 job / C SDK |
 | v0.2.0 | 2026-08-30 | 11 模块全部实现 / 252 测试通过 / 85.8% lines 覆盖 / 25 项性能契约 / deb 打包 / CI 8 job / C SDK |
 | v0.1.0 | 2026-08-28 | 仓库骨架 + CMake + CI 占位 + 设计文档 v1.0 |
