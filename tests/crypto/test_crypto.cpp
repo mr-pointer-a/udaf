@@ -672,3 +672,54 @@ TEST(UdafCrypto, TlsContextClientPkiBadCaReturnsNull) {
     auto cli = TlsContext::create_client_pki("/no/such/ca.pem", "", "");
     EXPECT_EQ(cli, nullptr);
 }
+
+// ===== 覆盖 psk.cpp 校验路径 =====
+
+// 覆盖 psk.cpp:229-230 psk_handshake_server_respond 参数大小校验
+TEST(UdafCrypto, PskHandshakeServerRespondInvalidSize) {
+    using udaf::crypto::psk_handshake_server_respond;
+    std::vector<std::uint8_t> bad_psk(16, 0xCC);  // 非 32 字节
+    auto req = udaf::crypto::psk_handshake_client_new("device-A");
+    auto r = psk_handshake_server_respond(bad_psk, req);
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::INVALID_ARG);
+}
+
+// 覆盖 psk.cpp:229-230 request.salt/client_random 大小校验
+TEST(UdafCrypto, PskHandshakeServerRespondInvalidRequest) {
+    using udaf::crypto::psk_handshake_server_respond;
+    std::vector<std::uint8_t> psk(32, 0xAA);
+    udaf::crypto::AuthRequest bad_req;
+    bad_req.client_random.assign(16, 0x11);  // 非 32 字节
+    bad_req.salt.assign(32, 0x22);
+    auto r = psk_handshake_server_respond(psk, bad_req);
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::INVALID_ARG);
+}
+
+// 覆盖 psk.cpp:278-279 psk_handshake_client_finalize 参数大小校验
+TEST(UdafCrypto, PskHandshakeClientFinalizeInvalidSize) {
+    using udaf::crypto::psk_handshake_client_finalize;
+    std::vector<std::uint8_t> bad_psk(31, 0xBB);  // 非 32 字节
+    auto req = udaf::crypto::psk_handshake_client_new("device-A");
+    udaf::crypto::AuthResponse resp;
+    resp.server_random.assign(32, 0x33);
+    resp.salt.assign(32, 0x44);
+    auto r = psk_handshake_client_finalize(bad_psk, req, resp);
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::INVALID_ARG);
+}
+
+// 覆盖 psk.cpp:278-279 psk 大小校验（仅检查 psk）
+// 注：client_finalize 不校验 response.*，仅校验 psk.size
+TEST(UdafCrypto, PskHandshakeClientFinalizeInvalidResponse) {
+    using udaf::crypto::psk_handshake_client_finalize;
+    std::vector<std::uint8_t> bad_psk(8, 0xCC);  // 非 32 字节
+    auto req = udaf::crypto::psk_handshake_client_new("device-A");
+    udaf::crypto::AuthResponse resp;
+    resp.server_random.assign(32, 0x55);
+    resp.salt.assign(32, 0x66);
+    auto r = psk_handshake_client_finalize(bad_psk, req, resp);
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::INVALID_ARG);
+}

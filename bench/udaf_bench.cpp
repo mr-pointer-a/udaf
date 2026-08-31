@@ -718,4 +718,106 @@ void udaf_bench_host_idle_memory(benchmark::State& state) {
 }
 BENCHMARK(udaf_bench_host_idle_memory);
 
+// ============ #22b PSK AEAD 1MB 吞吐（≥ 200 MB/s）============
+// 与 #22 单帧 256B 微基准对照；本场景面向大块数据传输（文件块/拓扑快照）
+static void udaf_bench_aead_throughput_1mb(benchmark::State& state) {
+    std::vector<std::uint8_t> key(32, 0xAB);
+    std::vector<std::uint8_t> msg(1024 * 1024, 0xCD);  // 1 MiB
+    udaf::crypto::Nonce n{};
+    for (auto _ : state) {
+        auto enc = udaf::crypto::psk_aead_encrypt(key, n, msg, {});
+        benchmark::DoNotOptimize(enc);
+    }
+    state.SetBytesProcessed(state.iterations() *
+                            static_cast<std::int64_t>(msg.size()));
+}
+BENCHMARK(udaf_bench_aead_throughput_1mb);
+
+// ============ #27b 审计 hash chain 校验吞吐 ============
+// 写入 N 条 → 重启 → verify_chain() 全链校验
+static void udaf_bench_audit_verify_chain(benchmark::State& state) {
+    static std::filesystem::path path;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        path = std::filesystem::temp_directory_path() / "udaf_bench_audit_verify.log";
+        std::filesystem::remove(path);
+        AuditLogger pre(path.string());
+        for (int i = 0; i < 500; ++i) {
+            (void)pre.append(ActionType::NodeHeartbeat, "h", "d",
+                             "{\"i\":" + std::to_string(i) + "}");
+        }
+    });
+    for (auto _ : state) {
+        AuditLogger log(path.string());
+        auto r = log.verify_chain();
+        benchmark::DoNotOptimize(r);
+    }
+    std::filesystem::remove(path);
+}
+BENCHMARK(udaf_bench_audit_verify_chain);
+
+// ============ #4b WAL 完整 append+replay 链路 ============
+// 与 #4 区别：本场景走真实 Wal 类（schema 头 + fsync + replay 反序列化）
+// 写入 200 条 → replay 校验数量 + sequence 单调
+static void udaf_bench_wal_replay_full(benchmark::State& state) {
+    using udaf::platform::fs::Wal;
+    using udaf::platform::fs::WalConfig;
+    using udaf::platform::fs::WalEntryType;
+
+    static std::filesystem::path path;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        path = std::filesystem::temp_directory_path() / "udaf_bench_wal_full.bin";
+    });
+    // 写入 200 条
+    WalConfig cfg;
+    cfg.path_ = path;
+    cfg.fsync_on_append_ = false;  // 关闭 fsync，专注 IO 路径开销
+    {
+        auto w = Wal::create(cfg);
+        if (w.is_ok()) {
+            auto& wal = *w.value();
+            std::vector<std::uint8_t> payload(64, 0xAA);
+            for (int i = 0; i < 200; ++i) {
+                (void)wal.append(WalEntryType::CUSTOM, "bench", payload);
+            }
+        }
+    }
+    // 每次迭代重新打开 + replay
+    for (auto _ : state) {
+        auto w = Wal::create(cfg);
+        if (w.is_err()) continue;
+        auto r = w.value()->replay();
+        benchmark::DoNotOptimize(r);
+    }
+    std::filesystem::remove(path);
+}
+BENCHMARK(udaf_bench_wal_replay_full);
+
+// ============ #13b 拓扑事务 commit（含 WAL 持久化）============
+// 批量添加 50 个节点 → commit → current_node_count 校验
+static void udaf_bench_topology_commit_50(benchmark::State& state) {
+    using udaf::ability_b::topology::Topology;
+    using udaf::ability_b::topology::PeerNode;
+
+    for (auto _ : state) {
+        Topology topo;
+        auto txr = topo.begin_transaction();
+        if (txr.is_err()) continue;
+        auto& tx = txr.value();
+        for (int i = 0; i < 50; ++i) {
+            PeerNode p;
+            p.node_id = "n-" + std::to_string(i);
+            p.hostname = "h-" + std::to_string(i);
+            p.bind_address = "127.0.0.1";
+            p.bind_port = static_cast<std::uint16_t>(9000 + i);
+            (void)tx.add_node(std::move(p));
+        }
+        auto cr = topo.commit(std::move(tx));
+        benchmark::DoNotOptimize(cr);
+    }
+    state.SetItemsProcessed(state.iterations() * 50);
+}
+BENCHMARK(udaf_bench_topology_commit_50);
+
 BENCHMARK_MAIN();

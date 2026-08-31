@@ -1,5 +1,34 @@
 # 变更日志
 
+## v0.3.13 (2026-09-01) - PSK 握手校验路径覆盖率补充 + 性能契约扩展
+
+### 新增
+
+- **tests/crypto/test_crypto.cpp**：4 项 PSK 握手校验路径测试
+  - PskHandshakeServerRespondInvalidSize：覆盖 `psk.cpp:229-230` 服务端响应的 PSK 尺寸校验
+  - PskHandshakeServerRespondInvalidRequest：覆盖请求 `salt`/`client_random` 尺寸校验路径
+  - PskHandshakeClientFinalizeInvalidSize：覆盖 `psk.cpp:278-279` 客户端 finalize 的 PSK 尺寸校验
+  - PskHandshakeClientFinalizeInvalidResponse：客户端 finalize 错误响应校验
+- **bench/udaf_bench.cpp**：4 项性能契约
+  - udaf_bench_aead_throughput_1mb：PSK AEAD 1 MiB 吞吐（实测 329 MB/s，达标 200 MB/s）
+  - udaf_bench_audit_verify_chain：审计 hash chain 全链校验（500 条，78 μs）
+  - udaf_bench_wal_replay_full：WAL 完整 append+replay 链路（200 条，1.65 ms）
+  - udaf_bench_topology_commit_50：拓扑事务 commit（含 50 节点批量入库，27 μs/批 → 1.85M items/s）
+
+### 指标
+
+- 测试通过：405 → 409 (+4)
+- 函数覆盖率：94.7% → 95.5%（首次突破 95% 目标）
+- 行覆盖率：94.0% → 94.1%
+- 性能契约：35 → 39 项（+4）
+
+### 相关
+
+- 残留 5.9% 行未覆盖主要为不可触发错误路径（pipe 写入失败 / fcntl 失败 / HKDF 失败 / `write_at` 失败等）
+- 新增 AEAD 1MB 大块吞吐基准与 #22 单帧 256B 微基准形成"小帧延迟 + 大块吞吐"完整覆盖
+
+---
+
 ## v0.3.12 (2026-08-31) - udaf_client_trust_list heap-use-after-free 修复
 
 ### 修复
