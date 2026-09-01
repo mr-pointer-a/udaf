@@ -735,6 +735,31 @@ TEST_F(WalTest, ReplayTruncatedEntryPayloadReturnsErr) {
     EXPECT_EQ(rr.error(), ErrorCode::PROTOCOL_TRUNCATED_BUFFER);
 }
 
+// 覆盖 read_entry 中读取 header 时返回 < kEntryHeaderSize 的分支（wal.cpp:367）
+// 文件只包含部分 entry header（16 < size < 56）→ read_at 返回 < 40 → PROTOCOL_TRUNCATED_BUFFER
+TEST_F(WalTest, ReplayTruncatedEntryHeaderReturnsErr) {
+    // 写入一条完整 entry
+    {
+        auto wr = Wal::create(default_cfg());
+        ASSERT_TRUE(wr.is_ok());
+        ASSERT_TRUE(wr.value()->append(WalEntryType::ADD_NODE, "abc",
+                                        make_payload(4)).is_ok());
+    }
+    // 截断文件到只保留 16 字节 file header + 部分 entry header
+    // 16 + 20 = 36 → entry header 读 40 字节但只能读到 20 → read_at 返回 20 < 40
+    {
+        int fd = ::open(path_.string().c_str(), O_RDWR);
+        ASSERT_GE(fd, 0);
+        ASSERT_EQ(::ftruncate(fd, 36), 0);
+        ::close(fd);
+    }
+    auto wr = Wal::create(default_cfg());
+    ASSERT_TRUE(wr.is_ok());
+    auto rr = wr.value()->replay();
+    EXPECT_TRUE(rr.is_err());
+    EXPECT_EQ(rr.error(), ErrorCode::PROTOCOL_TRUNCATED_BUFFER);
+}
+
 // 覆盖 create() 时 fsync_on_append=true 的路径（wal.cpp:471-473）
 TEST_F(WalTest, FsyncOnAppendPath) {
     WalConfig cfg = default_cfg();

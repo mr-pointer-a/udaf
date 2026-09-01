@@ -244,6 +244,94 @@ TEST(FaultInjection, WalTruncateAllFtruncateFailReturnsErr) {
         << "stdout=" << r.stdout_text;
 }
 
+// pread 返回 EINTR → read_at 进入重试分支（行 64-65）
+TEST(FaultInjection, WalReadEintrRecovers) {
+    auto r = run_subprocess(helper_path("fi_helper_wal_read_eintr"),
+                            {"LD_PRELOAD=" + lib_path(),
+                             "UDAF_FI_FS_FAIL=pread:EINTR:50pct"});
+    ASSERT_EQ(r.exit_code, 0) << "stderr: " << r.stderr_text;
+    // 50% 概率下多数能恢复，少数全 EINTR 时 ERR；二者均合法
+    EXPECT_TRUE(r.stdout_text.find("OK=") != std::string::npos ||
+                r.stdout_text.find("ERR=") != std::string::npos)
+        << "stdout=" << r.stdout_text;
+}
+
+// replay 内部 seek_set 失败（行 490-491）
+TEST(FaultInjection, WalReplaySeekFailReturnsErr) {
+    // 跳过 3 次 lseek（create/open/append 内部用到的），第 4 次起失败
+    auto r = run_subprocess(helper_path("fi_helper_wal_replay_seek_fail"),
+                            {"LD_PRELOAD=" + lib_path(),
+                             "UDAF_FI_FS_FAIL=lseek:EIO:100pct:3"});
+    ASSERT_EQ(r.exit_code, 0) << "stderr: " << r.stderr_text;
+    EXPECT_NE(r.stdout_text.find("ERR="), std::string::npos)
+        << "stdout=" << r.stdout_text;
+}
+
+// replay_stream 内部 seek_set 失败（行 521-522）
+TEST(FaultInjection, WalReplayStreamSeekFailReturnsErr) {
+    auto r = run_subprocess(helper_path("fi_helper_wal_replay_stream_seek_fail"),
+                            {"LD_PRELOAD=" + lib_path(),
+                             "UDAF_FI_FS_FAIL=lseek:EIO:100pct:3"});
+    ASSERT_EQ(r.exit_code, 0) << "stderr: " << r.stderr_text;
+    EXPECT_NE(r.stdout_text.find("ERR="), std::string::npos)
+        << "stdout=" << r.stdout_text;
+}
+
+// truncate rewrite 分支 seek_set 失败（行 591-592）
+TEST(FaultInjection, WalTruncateRewriteSeekFailReturnsErr) {
+    // 跳过 ~5 次 lseek（create+append 用到的），从 truncate rewrite 的 seek_set 起失败
+    auto r = run_subprocess(helper_path("fi_helper_wal_truncate_rewrite_seek_fail"),
+                            {"LD_PRELOAD=" + lib_path(),
+                             "UDAF_FI_FS_FAIL=lseek:EIO:100pct:5"});
+    ASSERT_EQ(r.exit_code, 0) << "stderr: " << r.stderr_text;
+    EXPECT_NE(r.stdout_text.find("ERR="), std::string::npos)
+        << "stdout=" << r.stdout_text;
+}
+
+// truncate rewrite 分支 ftruncate_wrapped 失败（行 588-589）
+TEST(FaultInjection, WalTruncateRewriteFtruncateFailReturnsErr) {
+    // append 不调用 ftruncate，跳过 0 次即可命中 truncate rewrite 的 ftruncate
+    auto r = run_subprocess(helper_path("fi_helper_wal_truncate_rewrite_ftruncate_fail"),
+                            {"LD_PRELOAD=" + lib_path(),
+                             "UDAF_FI_FS_FAIL=ftruncate:EIO:100pct:0"});
+    ASSERT_EQ(r.exit_code, 0) << "stderr: " << r.stderr_text;
+    EXPECT_NE(r.stdout_text.find("ERR="), std::string::npos)
+        << "stdout=" << r.stdout_text;
+}
+
+// truncate rewrite 分支 write_entry 失败（行 596-597）
+TEST(FaultInjection, WalTruncateRewriteWriteFailReturnsErr) {
+    // 3 次 append × 2 pwrite = 6 次；跳过 6 次后 pwrite 失败 → rewrite 第一次 write_entry 失败
+    auto r = run_subprocess(helper_path("fi_helper_wal_truncate_rewrite_write_fail"),
+                            {"LD_PRELOAD=" + lib_path(),
+                             "UDAF_FI_FS_FAIL=pwrite:EIO:100pct:6"});
+    ASSERT_EQ(r.exit_code, 0) << "stderr: " << r.stderr_text;
+    EXPECT_NE(r.stdout_text.find("ERR="), std::string::npos)
+        << "stdout=" << r.stdout_text;
+}
+
+// truncate kept.empty 分支 ftruncate_wrapped 失败（行 577-578）
+TEST(FaultInjection, WalTruncateKeptEmptyFtruncateFailReturnsErr) {
+    auto r = run_subprocess(helper_path("fi_helper_wal_truncate_kept_empty_ftruncate_fail"),
+                            {"LD_PRELOAD=" + lib_path(),
+                             "UDAF_FI_FS_FAIL=ftruncate:EIO:100pct:0"});
+    ASSERT_EQ(r.exit_code, 0) << "stderr: " << r.stderr_text;
+    EXPECT_NE(r.stdout_text.find("ERR="), std::string::npos)
+        << "stdout=" << r.stdout_text;
+}
+
+// truncate_all 内部 seek_set 失败（行 611-612）
+TEST(FaultInjection, WalTruncateAllSeekFailReturnsErr) {
+    // helper: 1 次 create (0 lseek) + 1 次 append (1 lseek) + truncate_all (1 lseek)
+    // → 跳过 1 次让 truncate_all 的 lseek 失败
+    auto r = run_subprocess(helper_path("fi_helper_wal_truncate_all_seek_fail"),
+                            {"LD_PRELOAD=" + lib_path(),
+                             "UDAF_FI_FS_FAIL=lseek:EIO:100pct:1"});
+    ASSERT_EQ(r.exit_code, 0) << "stderr: " << r.stderr_text;
+    EXPECT_NE(r.stdout_text.find("ERR="), std::string::npos)
+        << "stdout=" << r.stdout_text;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {

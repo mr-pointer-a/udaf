@@ -84,6 +84,8 @@ typedef struct {
     char name[32];
     int  err;          // -1 表示未设置失败注入
     char ratio[16];    // "" / "10pct" / "100pct"
+    int  skip_first;   // 跳过前 N 次调用再开始应用（默认 0）
+    _Atomic int  count; // 已拦截次数
 } fail_rule_t;
 
 #define MAX_FAIL_RULES 16
@@ -121,9 +123,11 @@ static void log_event(const char* fmt, ...) {
 static int apply_fail(const fail_rule_t* rules, size_t n, const char* syscall) {
     for (size_t i = 0; i < n; ++i) {
         if (strcmp(rules[i].name, syscall) != 0) continue;
+        int prev = atomic_fetch_add(&rules[i].count, 1);
+        if (prev < rules[i].skip_first) continue;  // 跳过前 N 次
         if (!match_ratio(rules[i].ratio)) continue;
         errno = rules[i].err;
-        log_event("FAIL %s → errno=%d", syscall, rules[i].err);
+        log_event("FAIL %s → errno=%d (call#%d)", syscall, rules[i].err, prev + 1);
         return 1;
     }
     return 0;
@@ -176,12 +180,15 @@ static void parse_fail_env(const char* env_name,
     char* save = NULL;
     char* tok = strtok_r(buf, ",", &save);
     while (tok && *out_n < cap) {
-        // 格式：name:errno[:ratio[:seed]]
+        // 格式：name:errno[:ratio[:skip]]
+        // ratio 默认 "100pct"；skip 默认 0（立即生效）
         char* colon1 = strchr(tok, ':');
         if (!colon1) { tok = strtok_r(NULL, ",", &save); continue; }
         *colon1 = '\0';
         char* colon2 = strchr(colon1 + 1, ':');
         if (colon2) *colon2 = '\0';
+        char* colon3 = colon2 ? strchr(colon2 + 1, ':') : NULL;
+        if (colon3) *colon3 = '\0';
 
         strncpy(out[*out_n].name, tok, sizeof(out[*out_n].name) - 1);
         out[*out_n].name[sizeof(out[*out_n].name) - 1] = '\0';
@@ -195,6 +202,8 @@ static void parse_fail_env(const char* env_name,
         } else {
             strcpy(out[*out_n].ratio, "100pct");
         }
+        out[*out_n].skip_first = colon3 ? atoi(colon3 + 1) : 0;
+        atomic_store(&out[*out_n].count, 0);
         (*out_n)++;
         tok = strtok_r(NULL, ",", &save);
     }
