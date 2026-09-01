@@ -191,6 +191,68 @@ TEST(UdafSerialization, DecodePayloadInplaceFails) {
     EXPECT_EQ(r.error(), ErrorCode::SERIALIZE_DECODE_FAILED);
 }
 
+// ===== F15 新增覆盖 =====
+
+// 覆盖 serializer.cpp:32-33 encode_payload 返回错误 → encode 透传错误码
+class FailingEncodeSerializer : public SerializerBase {
+public:
+    [[nodiscard]] std::string type_name() const noexcept override {
+        return "failing_encode";
+    }
+    [[nodiscard]] std::uint32_t schema_version() const noexcept override {
+        return 1;
+    }
+    [[nodiscard]] bool accepts_type(std::string_view) const noexcept override {
+        return true;
+    }
+    [[nodiscard]] udaf::core::Result<std::vector<std::uint8_t>>
+    encode_payload() const noexcept override {
+        return udaf::core::Result<std::vector<std::uint8_t>>::err(
+            udaf::core::ErrorCode::SERIALIZE_ENCODE_FAILED);
+    }
+    [[nodiscard]] udaf::core::Result<void>
+    decode_payload_inplace(std::span<const std::uint8_t>) noexcept override {
+        return udaf::core::Result<void>::ok();
+    }
+};
+
+TEST(UdafSerialization, EncodePayloadFailsPropagatesError) {
+    FailingEncodeSerializer enc;
+    auto frame = enc.encode({});
+    ASSERT_TRUE(frame.is_err());
+    EXPECT_EQ(frame.error(), ErrorCode::SERIALIZE_ENCODE_FAILED);
+}
+
+// 覆盖 serializer.cpp:38-40 type_name() 长度 > 255 → SERIALIZE_TYPE_MISMATCH
+class LongTypeNameSerializer : public SerializerBase {
+public:
+    [[nodiscard]] std::string type_name() const noexcept override {
+        // 256 字节（> 255 触发 type_len 校验）
+        return std::string(256, 'L');
+    }
+    [[nodiscard]] std::uint32_t schema_version() const noexcept override {
+        return 1;
+    }
+    [[nodiscard]] bool accepts_type(std::string_view) const noexcept override {
+        return true;
+    }
+    [[nodiscard]] udaf::core::Result<std::vector<std::uint8_t>>
+    encode_payload() const noexcept override {
+        return udaf::core::Result<std::vector<std::uint8_t>>::ok({});
+    }
+    [[nodiscard]] udaf::core::Result<void>
+    decode_payload_inplace(std::span<const std::uint8_t>) noexcept override {
+        return udaf::core::Result<void>::ok();
+    }
+};
+
+TEST(UdafSerialization, LongTypeNameRejected) {
+    LongTypeNameSerializer enc;
+    auto frame = enc.encode({});
+    ASSERT_TRUE(frame.is_err());
+    EXPECT_EQ(frame.error(), ErrorCode::SERIALIZE_TYPE_MISMATCH);
+}
+
 // ---------------- C2: Port ----------------
 
 TEST(UdafPort, TryRecvEmpty) {
