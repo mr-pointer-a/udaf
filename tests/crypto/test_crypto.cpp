@@ -1100,3 +1100,235 @@ TEST(UdafCrypto, TlsContextClientPkiBadKeyFileReturnsNull) {
     auto cli = TlsContext::create_client_pki("", cert, bad_key);
     EXPECT_EQ(cli, nullptr);  // SSL_CTX_use_PrivateKey_file 失败
 }
+
+// ============================================================
+// F23 新增覆盖：pki.cpp PkiHandshake 全部路径
+// ============================================================
+
+#include "pki.hpp"
+using udaf::crypto::PkiHandshake;
+using udaf::crypto::PkiHandshakeStage;
+
+// 完整 TLS 1.3 PKI 握手 → 加密 → 解密 → 指纹
+TEST(UdafCrypto, PkiHandshakeFullRoundTrip) {
+    TmpDir tmp;
+    auto cert = tmp.p() / "cert.pem";
+    auto key  = tmp.p() / "key.pem";
+    ASSERT_TRUE(generate_self_signed(cert, key));
+
+    auto srv_ctx = TlsContext::create_server_pki(cert, key);
+    auto cli_ctx = TlsContext::create_client_pki(cert, cert, key);
+    ASSERT_NE(srv_ctx, nullptr);
+    ASSERT_NE(cli_ctx, nullptr);
+
+    int fds[2] = {-1, -1};
+    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0) << strerror(errno);
+
+    auto srv_hs = PkiHandshake::create(std::move(srv_ctx), fds[0]);
+    auto cli_hs = PkiHandshake::create(std::move(cli_ctx), fds[1]);
+    ASSERT_NE(srv_hs, nullptr);
+    ASSERT_NE(cli_hs, nullptr);
+    EXPECT_EQ(srv_hs->stage(), PkiHandshakeStage::Init);
+    EXPECT_EQ(cli_hs->stage(), PkiHandshakeStage::Init);
+
+    std::atomic<bool> srv_done{false}, cli_done{false};
+    std::atomic<bool> srv_failed{false}, cli_failed{false};
+    auto step_loop = [](PkiHandshake* hs, std::atomic<bool>& done,
+                        std::atomic<bool>& failed) {
+        for (int i = 0; i < 500; ++i) {
+            auto stage = hs->step();
+            if (stage == PkiHandshakeStage::Done) { done.store(true); return; }
+            if (stage == PkiHandshakeStage::Failed) { failed.store(true); return; }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+    std::thread srv_thread(step_loop, srv_hs.get(), std::ref(srv_done), std::ref(srv_failed));
+    std::thread cli_thread(step_loop, cli_hs.get(), std::ref(cli_done), std::ref(cli_failed));
+    srv_thread.join();
+    cli_thread.join();
+
+    ASSERT_TRUE(srv_done.load()) << "server handshake failed";
+    ASSERT_TRUE(cli_done.load()) << "client handshake failed";
+    EXPECT_TRUE(srv_hs->is_done());
+    EXPECT_TRUE(cli_hs->is_done());
+
+    // 重复 step() 在 Done 状态下应保持 Done（line 57-58）
+    EXPECT_EQ(srv_hs->step(), PkiHandshakeStage::Done);
+    EXPECT_EQ(cli_hs->step(), PkiHandshakeStage::Done);
+
+    // peer_fingerprint：服务端配置 SSL_VERIFY_NONE（未要求客户端证书），
+    // 因此服务端 SSL_get_peer_certificate 返回 nullptr，srv_fp 返回 err。
+    // 客户端 SSL_VERIFY_PEER + 服务端证书 → cli_fp 返回 ok 且 32 字节 SHA-256。
+    auto srv_fp = srv_hs->peer_fingerprint();
+    auto cli_fp = cli_hs->peer_fingerprint();
+    // 服务端视角：服务端未配置客户端证书校验，无对端证书
+    EXPECT_TRUE(srv_fp.is_err());
+    EXPECT_EQ(srv_fp.error(), udaf::core::ErrorCode::BIZ_FILE_NOT_FOUND);
+    // 客户端视角：能拿到服务端证书指纹
+    ASSERT_TRUE(cli_fp.is_ok());
+    EXPECT_EQ(cli_fp.value().size(), 32u);
+
+    // encrypt + decrypt 验证通信
+    const std::uint8_t msg[] = "hello-pki-roundtrip";
+    auto enc_r = cli_hs->encrypt(msg);
+    ASSERT_TRUE(enc_r.is_ok());
+    EXPECT_FALSE(enc_r.value().empty());
+
+    auto dec_r = srv_hs->decrypt(enc_r.value());
+    ASSERT_TRUE(dec_r.is_ok());
+    // TLS 1.3 解密可能包含内部 record padding（多 1 字节），断言前缀匹配
+    ASSERT_GE(dec_r.value().size(), sizeof(msg) - 1);
+    EXPECT_EQ(std::memcmp(dec_r.value().data(), msg, sizeof(msg) - 1), 0);
+
+    // encrypt 多次调用应都能成功（line 111-117 反复执行）
+    for (int i = 0; i < 3; ++i) {
+        auto enc_repeat = cli_hs->encrypt(msg);
+        ASSERT_TRUE(enc_repeat.is_ok());
+        EXPECT_FALSE(enc_repeat.value().empty());
+    }
+
+    ::close(fds[0]);
+    ::close(fds[1]);
+}
+
+// create() 输入校验：null ctx / 非法 fd 应返回 nullptr（line 29）
+TEST(UdafCrypto, PkiHandshakeCreateRejectsInvalidInput) {
+    TmpDir tmp;
+    auto cert = tmp.p() / "cert.pem";
+    auto key  = tmp.p() / "key.pem";
+    ASSERT_TRUE(generate_self_signed(cert, key));
+
+    auto good_ctx = TlsContext::create_server_pki(cert, key);
+    ASSERT_NE(good_ctx, nullptr);
+
+    int fds[2] = {-1, -1};
+    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0) << strerror(errno);
+
+    // null ctx（line 29 的 !ctx 分支）
+    EXPECT_EQ(PkiHandshake::create(nullptr, fds[0]), nullptr);
+    // 非法 fd（line 29 的 fd < 0 分支）
+    EXPECT_EQ(PkiHandshake::create(std::move(good_ctx), -1), nullptr);
+
+    ::close(fds[0]);
+    ::close(fds[1]);
+}
+
+// step() 在 Failed 状态应保持 Failed（line 57-58）
+TEST(UdafCrypto, PkiHandshakeStepStaysInTerminalState) {
+    TmpDir tmp;
+    auto cert = tmp.p() / "cert.pem";
+    auto key  = tmp.p() / "key.pem";
+    ASSERT_TRUE(generate_self_signed(cert, key));
+
+    auto srv_ctx = TlsContext::create_server_pki(cert, key);
+    auto cli_ctx = TlsContext::create_client_pki(cert, cert, key);
+    ASSERT_NE(srv_ctx, nullptr);
+    ASSERT_NE(cli_ctx, nullptr);
+
+    int fds[2] = {-1, -1};
+    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0) << strerror(errno);
+
+    auto srv_hs = PkiHandshake::create(std::move(srv_ctx), fds[0]);
+    auto cli_hs = PkiHandshake::create(std::move(cli_ctx), fds[1]);
+    ASSERT_NE(srv_hs, nullptr);
+    ASSERT_NE(cli_hs, nullptr);
+
+    // 正常完成握手
+    std::atomic<bool> srv_done{false}, cli_done{false};
+    std::atomic<bool> srv_failed{false}, cli_failed{false};
+    auto step_loop = [](PkiHandshake* hs, std::atomic<bool>& done,
+                        std::atomic<bool>& failed) {
+        for (int i = 0; i < 500; ++i) {
+            auto stage = hs->step();
+            if (stage == PkiHandshakeStage::Done) { done.store(true); return; }
+            if (stage == PkiHandshakeStage::Failed) { failed.store(true); return; }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+    std::thread srv_thread(step_loop, srv_hs.get(), std::ref(srv_done), std::ref(srv_failed));
+    std::thread cli_thread(step_loop, cli_hs.get(), std::ref(cli_done), std::ref(cli_failed));
+    srv_thread.join();
+    cli_thread.join();
+    ASSERT_TRUE(srv_done.load());
+    ASSERT_TRUE(cli_done.load());
+
+    // 握手完成后 step() 应返回 Done（line 57-58 早返回）
+    EXPECT_EQ(srv_hs->step(), PkiHandshakeStage::Done);
+    EXPECT_EQ(srv_hs->step(), PkiHandshakeStage::Done);
+    EXPECT_EQ(cli_hs->step(), PkiHandshakeStage::Done);
+
+    ::close(fds[0]);
+    ::close(fds[1]);
+}
+
+// encrypt/decrypt 在握手未完成时应返回 NOT_IMPLEMENTED（line 106-108, 122-124）
+TEST(UdafCrypto, PkiHandshakeEncryptDecryptBeforeDoneFails) {
+    TmpDir tmp;
+    auto cert = tmp.p() / "cert.pem";
+    auto key  = tmp.p() / "key.pem";
+    ASSERT_TRUE(generate_self_signed(cert, key));
+
+    auto srv_ctx = TlsContext::create_server_pki(cert, key);
+    ASSERT_NE(srv_ctx, nullptr);
+
+    int fds[2] = {-1, -1};
+    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0) << strerror(errno);
+
+    auto srv_hs = PkiHandshake::create(std::move(srv_ctx), fds[0]);
+    ASSERT_NE(srv_hs, nullptr);
+    EXPECT_EQ(srv_hs->stage(), PkiHandshakeStage::Init);
+
+    const std::uint8_t msg[] = "x";
+    auto enc = srv_hs->encrypt(msg);
+    ASSERT_TRUE(enc.is_err());
+    EXPECT_EQ(enc.error(), udaf::core::ErrorCode::NOT_IMPLEMENTED);
+
+    auto dec = srv_hs->decrypt(msg);
+    ASSERT_TRUE(dec.is_err());
+    EXPECT_EQ(dec.error(), udaf::core::ErrorCode::NOT_IMPLEMENTED);
+
+    // peer_fingerprint 在 Done 之前应返回 NOT_IMPLEMENTED（line 85-87）
+    auto fp = srv_hs->peer_fingerprint();
+    ASSERT_TRUE(fp.is_err());
+    EXPECT_EQ(fp.error(), udaf::core::ErrorCode::NOT_IMPLEMENTED);
+
+    ::close(fds[0]);
+    ::close(fds[1]);
+}
+
+// 仅驱动服务端，向其写入畸形字节 → 服务端 step() 应进入 Failed 状态
+// （覆盖 line 73-79 Failed 分支）
+TEST(UdafCrypto, PkiHandshakeStepFailsWhenPeerSilent) {
+    TmpDir tmp;
+    auto cert = tmp.p() / "cert.pem";
+    auto key  = tmp.p() / "key.pem";
+    ASSERT_TRUE(generate_self_signed(cert, key));
+
+    auto srv_ctx = TlsContext::create_server_pki(cert, key);
+    ASSERT_NE(srv_ctx, nullptr);
+
+    int fds[2] = {-1, -1};
+    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0) << strerror(errno);
+
+    auto srv_hs = PkiHandshake::create(std::move(srv_ctx), fds[0]);
+    ASSERT_NE(srv_hs, nullptr);
+
+    // 向服务端发送一段非 TLS 字节，触发协议错误（不需要客户端真握手）
+    const std::uint8_t garbage[] = {0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff};
+    ssize_t w = ::send(fds[1], garbage, sizeof(garbage), MSG_NOSIGNAL);
+    ASSERT_EQ(w, static_cast<ssize_t>(sizeof(garbage)));
+
+    // 服务端 step() 现在应当直接进入 Failed
+    PkiHandshakeStage final_stage = PkiHandshakeStage::Init;
+    for (int i = 0; i < 20; ++i) {
+        final_stage = srv_hs->step();
+        if (final_stage == PkiHandshakeStage::Failed) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    EXPECT_EQ(final_stage, PkiHandshakeStage::Failed);
+    // 重复 step() 应保持 Failed（line 57-58 早返回）
+    EXPECT_EQ(srv_hs->step(), PkiHandshakeStage::Failed);
+
+    ::close(fds[0]);
+    ::close(fds[1]);
+}
