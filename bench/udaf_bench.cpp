@@ -820,4 +820,122 @@ static void udaf_bench_topology_commit_50(benchmark::State& state) {
 }
 BENCHMARK(udaf_bench_topology_commit_50);
 
+// ============ #3 设备端冷启动 < 200ms ============
+// 测量 Client 构造 + start() 全程耗时（构造审计 logger / 注册中心 / 调度器等）
+// 契约：单进程冷启动 ≤ 200ms
+static void udaf_bench_startup(benchmark::State& state) {
+    for (auto _ : state) {
+        auto t0 = std::chrono::steady_clock::now();
+        {
+            udaf::sdk::ClientConfig cfg;
+            cfg.node_id    = "bench-cold-startup";
+            cfg.audit_path = "/tmp/udaf_bench_cold_startup.log";
+            udaf::sdk::Client c(cfg);
+            auto sr = c.start();
+            benchmark::DoNotOptimize(sr);
+            auto stopr = c.stop();
+            benchmark::DoNotOptimize(stopr);
+        }
+        auto t1 = std::chrono::steady_clock::now();
+        auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+        state.SetIterationTime(static_cast<double>(us) / 1e6);
+    }
+}
+BENCHMARK(udaf_bench_startup)->UseManualTime();
+
+// ============ #4 设备端崩溃恢复 ≤ 5s ============
+// 模拟：一次性预热写 200 条 audit → 销毁 logger → 重建 → verify_chain
+// 契约：完整恢复链路 ≤ 5s（实测通常 < 100ms）
+static void udaf_bench_recovery(benchmark::State& state) {
+    using udaf::audit::AuditLogger;
+    using udaf::audit::ActionType;
+    const std::string audit_path = "/tmp/udaf_bench_recovery_audit.log";
+
+    // 一次性预热：写 200 条审计
+    static std::once_flag once;
+    std::call_once(once, [&] {
+        std::error_code ec;
+        std::filesystem::remove(audit_path, ec);
+        AuditLogger pre(audit_path);
+        for (int i = 0; i < 200; ++i) {
+            auto ar = pre.append(ActionType::TopologyUpdate, "bench", "recover",
+                                 "{\"i\":" + std::to_string(i) + "}");
+            benchmark::DoNotOptimize(ar);
+        }
+    });
+
+    for (auto _ : state) {
+        auto t0 = std::chrono::steady_clock::now();
+        // 模拟"重启"：重新打开审计日志（触发 hash chain 校验 + replay）
+        AuditLogger post(audit_path);
+        auto vr = post.verify_chain();
+        benchmark::DoNotOptimize(vr);
+        auto t1 = std::chrono::steady_clock::now();
+        auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+        state.SetIterationTime(static_cast<double>(us) / 1e6);
+    }
+}
+BENCHMARK(udaf_bench_recovery)->UseManualTime();
+
+// ============ #25 命令往返延迟 P99 < 15ms ============
+// inproc Channel: 端到端 CmdRequest → CmdResult 往返（双 channel:
+//   req_chan  表示"客户端→服务端"方向；
+//   resp_chan 表示"服务端→客户端"方向）
+// 每个 channel 的 send + recv 在同一 instance 上模拟 SPSC 一次往返。
+// 契约：P99 < 15ms
+static void udaf_bench_command_roundtrip_p99(benchmark::State& state) {
+    using udaf::ability_b::transport::InprocChannel;
+    using udaf::ability_b::transport::Channel;
+    using udaf::ability_b::transport::MessagePriority;
+    using udaf::ability_c::messages::CmdRequest;
+    using udaf::ability_c::messages::CmdResult;
+
+    static std::unique_ptr<Channel<CmdRequest>> req_chan;
+    static std::unique_ptr<Channel<CmdResult>>  resp_chan;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        req_chan  = std::make_unique<Channel<CmdRequest>>(std::make_unique<InprocChannel>(4096));
+        resp_chan = std::make_unique<Channel<CmdResult>>(std::make_unique<InprocChannel>(4096));
+    });
+
+    std::vector<double> samples;
+    samples.reserve(static_cast<std::size_t>(state.max_iterations));
+
+    for (auto _ : state) {
+        CmdRequest req;
+        req.command = "/bin/echo";
+        req.args = {"hello"};
+
+        auto t0 = std::chrono::steady_clock::now();
+        // 客户端 → 服务端
+        (void)req_chan->send(req, MessagePriority::Data);
+        CmdRequest req_recv{};
+        (void)req_chan->recv(req_recv, 0);
+        // 服务端 → 客户端
+        CmdResult res;
+        res.exit_code = 0;
+        res.stdout_text = "hello\n";
+        (void)resp_chan->send(res, MessagePriority::Data);
+        CmdResult res_recv{};
+        (void)resp_chan->recv(res_recv, 0);
+        auto t1 = std::chrono::steady_clock::now();
+        auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+        samples.push_back(static_cast<double>(us) / 1000.0);  // ms
+    }
+
+    if (!samples.empty()) {
+        std::sort(samples.begin(), samples.end());
+        auto p = [&](double q) {
+            std::size_t idx = static_cast<std::size_t>(
+                static_cast<double>(samples.size()) * q);
+            if (idx >= samples.size()) idx = samples.size() - 1;
+            return samples[idx];
+        };
+        state.counters["p50_ms"] = p(0.50);
+        state.counters["p95_ms"] = p(0.95);
+        state.counters["p99_ms"] = p(0.99);
+    }
+}
+BENCHMARK(udaf_bench_command_roundtrip_p99);
+
 BENCHMARK_MAIN();
