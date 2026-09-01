@@ -157,6 +157,11 @@ public:
         return target_->push(std::move(v));
     }
 
+    /// @brief 运行时绑定/解绑对端 InputPort（仅测试 / SDK 编排使用）。
+    /// 生产拓扑中 target_ 在构造期注入，节点生命周期内不变。
+    void set_target(InputPort<T>* p) noexcept { target_ = p; }
+    [[nodiscard]] InputPort<T>* target() const noexcept { return target_; }
+
 private:
     PortInfo info_;
     InputPort<T>* target_ = nullptr;

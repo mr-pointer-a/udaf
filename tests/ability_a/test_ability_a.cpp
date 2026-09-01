@@ -14,12 +14,17 @@
 #include "ability_a/registry/service_registry.hpp"
 #include "ability_a/transport/udp_socket.hpp"
 #include "ability_a/discovery/advertisement.hpp"
+#include "ability_a/discovery/advertiser.hpp"
+#include "ability_a/discovery/scanner.hpp"
 #include "ability_a/trust/peer_whitelist.hpp"
 #include "ability_a/bridge/discovery_bridge.hpp"
 #include "bridge/topology_update_callbacks.hpp"
+#include "crypto/hmac.hpp"
 
+#include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <span>
 #include <thread>
@@ -864,4 +869,205 @@ TEST(UdafRegistry, UnsubscribeInvalidHandleNoCrash) {
     ServiceRegistry reg;
     reg.unsubscribe(99999);  // 不存在的 handle → 应安全忽略
     SUCCEED();
+}
+
+// ===== F1: Advertiser / Scanner 直接测试 =====
+//
+// 注：advertiser/scanner 的真实 UDP 收发需要本机 UDP socket 与广播权限，
+// 且 broadcast_once/bind_port 互相影响难以并发。本组测试覆盖 handle_frame
+// 解析路径（包含 magic、版本、nonce 重放、payload 解析）以及 Advertiser
+// /Scanner 的生命周期与构造分支（sock 创建失败、payload 序列化失败等）。
+
+using udaf::ability_a::discovery::Advertiser;
+using udaf::ability_a::discovery::AdvertiserConfig;
+using udaf::ability_a::discovery::AdvertisementPayload;
+using udaf::ability_a::discovery::Scanner;
+using udaf::ability_a::discovery::ScannerConfig;
+
+// 构造一个合法的 discovery 帧（48B header + payload），供 Scanner::handle_frame 直接消费
+namespace {
+
+std::vector<std::uint8_t> make_valid_frame(const std::string& node_id,
+                                            std::array<std::uint8_t, 8> nonce = {}) {
+    AdvertisementPayload p;
+    p.node_id      = node_id;
+    p.hostname     = "host-" + node_id;
+    p.bind_address = "127.0.0.1";
+    p.bind_port    = 9100;
+    p.services     = {"cmd-exec"};
+    auto payload = udaf::ability_a::discovery::serialize_payload(p);
+
+    constexpr std::size_t kHeaderSize = 48;
+    std::vector<std::uint8_t> frame(kHeaderSize + payload.size(), 0);
+    // magic "DCAD"
+    frame[0] = 0x44; frame[1] = 0x43; frame[2] = 0x41; frame[3] = 0x44;
+    // version = 1
+    frame[4] = 0; frame[5] = 0; frame[6] = 0; frame[7] = 1;
+    // nonce（8B）
+    std::memcpy(frame.data() + 8, nonce.data(), 8);
+    // mac（32B）= HMAC-SHA256(key=全0(无PSK), msg=nonce || payload)
+    std::vector<std::uint8_t> mac_data;
+    mac_data.reserve(8 + payload.size());
+    mac_data.insert(mac_data.end(), frame.begin() + 8, frame.begin() + 16);
+    mac_data.insert(mac_data.end(), payload.begin(), payload.end());
+    std::vector<std::uint8_t> mac_key(32, 0);
+    auto mac = udaf::crypto::hmac_sha256(mac_key, mac_data);
+    if (mac.is_ok() && mac.value().size() == 32) {
+        std::memcpy(frame.data() + 16, mac.value().data(), 32);
+    }
+    std::memcpy(frame.data() + kHeaderSize, payload.data(), payload.size());
+    return frame;
+}
+
+// 构造一个 magic 不匹配的非法帧
+std::vector<std::uint8_t> make_bad_magic_frame() {
+    std::vector<std::uint8_t> frame(64, 0);
+    frame[0] = 0xFF; frame[1] = 0xFF; frame[2] = 0xFF; frame[3] = 0xFF;
+    return frame;
+}
+
+}  // namespace
+
+// Scanner::handle_frame 收到合法帧 → 注册到 registry 并返回 Ok(true)
+TEST(UdafScanner, HandleFrameRegistersNode) {
+    ServiceRegistry reg;
+    auto scanner = Scanner::create(&reg, ScannerConfig{});
+    ASSERT_NE(scanner, nullptr);
+
+    auto frame = make_valid_frame("scanner-node-1");
+    auto r = scanner->handle_frame(frame);
+    ASSERT_TRUE(r.is_ok()) << "valid frame should parse";
+    EXPECT_TRUE(r.value());
+
+    auto q = reg.get_node("scanner-node-1");
+    ASSERT_TRUE(q.is_ok());
+    EXPECT_EQ(q.value().bind_port_, 9100);
+    EXPECT_EQ(q.value().services_.size(), 1u);
+}
+
+// Scanner::handle_frame 重复 nonce → 第二次返回 Ok(false)（静默去重）
+TEST(UdafScanner, ReplayProtectionDuplicatesSilenced) {
+    ServiceRegistry reg;
+    auto scanner = Scanner::create(&reg, ScannerConfig{});
+    ASSERT_NE(scanner, nullptr);
+    scanner->clear_nonces();
+
+    // 同一 frame 内部 nonce 相同（构造时全 0）→ 第二次被重放拦截
+    auto frame = make_valid_frame("replay-victim");
+    auto r1 = scanner->handle_frame(frame);
+    ASSERT_TRUE(r1.is_ok());
+    EXPECT_TRUE(r1.value());
+
+    auto r2 = scanner->handle_frame(frame);
+    ASSERT_TRUE(r2.is_ok());
+    EXPECT_FALSE(r2.value()) << "duplicate nonce should be silently dropped";
+}
+
+// Scanner::handle_frame magic 不匹配 → 返回 Err(SERIALIZE_VERSION_MISMATCH)
+TEST(UdafScanner, BadMagicReturnsVersionMismatch) {
+    ServiceRegistry reg;
+    auto scanner = Scanner::create(&reg, ScannerConfig{});
+    ASSERT_NE(scanner, nullptr);
+
+    auto frame = make_bad_magic_frame();
+    auto r = scanner->handle_frame(frame);
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::SERIALIZE_VERSION_MISMATCH);
+}
+
+// Scanner::handle_frame 帧长度不足 header → 返回 Err(SERIALIZE_DECODE_FAILED)
+TEST(UdafScanner, TruncatedFrameReturnsDecodeFailed) {
+    ServiceRegistry reg;
+    auto scanner = Scanner::create(&reg, ScannerConfig{});
+    ASSERT_NE(scanner, nullptr);
+
+    std::vector<std::uint8_t> short_frame(10, 0);  // < 48B header
+    auto r = scanner->handle_frame(short_frame);
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::SERIALIZE_DECODE_FAILED);
+}
+
+// Scanner 生命周期：start → running → stop
+TEST(UdafScanner, Lifecycle) {
+    ServiceRegistry reg;
+    auto scanner = Scanner::create(&reg, ScannerConfig{});
+    ASSERT_NE(scanner, nullptr);
+    EXPECT_FALSE(scanner->running());
+
+    EXPECT_TRUE(scanner->start().is_ok());
+    EXPECT_TRUE(scanner->running());
+    EXPECT_TRUE(scanner->start().is_err());  // 重复 start → BUSY
+    scanner->stop();
+    EXPECT_FALSE(scanner->running());
+}
+
+// Scanner::create 传入 nullptr registry 仍可创建（运行时 try_send 走 nullptr 安全）
+TEST(UdafScanner, CreateWithoutRegistrySucceeds) {
+    auto scanner = Scanner::create(nullptr, ScannerConfig{});
+    ASSERT_NE(scanner, nullptr);
+    auto frame = make_valid_frame("noreg-node");
+    auto r = scanner->handle_frame(frame);
+    // 没 registry 时解析仍然成功，但不会写入
+    ASSERT_TRUE(r.is_ok());
+    EXPECT_TRUE(r.value());
+}
+
+// Scanner::seen_count 在收到 frame 后递增
+TEST(UdafScanner, SeenCountIncrements) {
+    ServiceRegistry reg;
+    auto scanner = Scanner::create(&reg, ScannerConfig{});
+    ASSERT_NE(scanner, nullptr);
+    scanner->clear_nonces();
+    EXPECT_EQ(scanner->seen_count(), 0u);
+
+    auto frame = make_valid_frame("count-node");
+    (void)scanner->handle_frame(frame);
+    EXPECT_GE(scanner->seen_count(), 1u);
+}
+
+// Advertiser 构造与生命周期（不实际广播 UDP，避免本机权限/端口冲突）
+TEST(UdafAdvertiser, Lifecycle) {
+    AdvertiserConfig cfg;
+    cfg.bind_address = "127.0.0.1";
+    cfg.bind_port = 0;          // 自动端口
+    cfg.broadcast_port = 19999;
+    cfg.period = std::chrono::seconds(60);  // 长周期，避免后台线程实际广播
+
+    AdvertisementPayload payload;
+    payload.node_id = "adv-node-1";
+    payload.hostname = "adv-host";
+    payload.bind_address = "127.0.0.1";
+    payload.bind_port = 9000;
+    payload.services = {"cmd-exec"};
+
+    auto adv = Advertiser::create(std::move(payload), cfg);
+    ASSERT_NE(adv, nullptr);
+    EXPECT_FALSE(adv->running());
+
+    EXPECT_TRUE(adv->start().is_ok());
+    EXPECT_TRUE(adv->running());
+    EXPECT_TRUE(adv->start().is_err());  // 重复 start → BUSY
+    adv->stop();
+    EXPECT_FALSE(adv->running());
+}
+
+// Advertiser::create 在合法 config 下能成功构造
+TEST(UdafAdvertiser, CreateSucceeds) {
+    AdvertiserConfig cfg;
+    cfg.bind_port = 0;
+    AdvertisementPayload p;
+    p.node_id = "adv-create-test";
+    auto adv = Advertiser::create(std::move(p), cfg);
+    ASSERT_NE(adv, nullptr);
+}
+
+// Advertiser 在 PSK 模式下也能构造（不影响后续行为）
+TEST(UdafAdvertiser, CreateWithPskSucceeds) {
+    AdvertiserConfig cfg;
+    cfg.bind_port = 0;
+    AdvertisementPayload p;
+    p.node_id = "adv-psk-test";
+    std::vector<std::uint8_t> psk(32, 0xA5);
+    auto adv = Advertiser::create(std::move(p), cfg, psk);
+    ASSERT_NE(adv, nullptr);
 }
