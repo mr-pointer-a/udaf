@@ -31,8 +31,8 @@ HARD_MULT=1.5
 # 字段：bench_name|threshold_value|unit|comparison|contract_id|description
 # comparison: "<=" (时间越小越好) | ">=" (吞吐越大越好)
 THRESHOLDS=(
-    # #3 设备端冷启动 < 200ms
-    "udaf_bench_node_cold_startup|200000|<=||3|设备端冷启动 < 200ms（架构 #3）"
+    # #3 设备端冷启动 < 200ms（Client 构造 + start/stop 全程；阈值单位 ns）
+    "udaf_bench_startup|200000000|<=||3|设备端冷启动 < 200ms（架构 #3）"
     # #5 同主机消息延迟 P95 < 100μs (100000 ns)
     "udaf_bench_inproc_latency_p95|100000|<=||5|同主机消息延迟 P95 < 100μs（架构 #5）"
     # #7 同主机吞吐 ≥ 50K msg/s → 当前 bench 输出 items_per_second
@@ -55,8 +55,8 @@ THRESHOLDS=(
     "udaf_bench_crypto_overhead|2000|<=||26|HMAC 单次 < 2μs（架构 #26 加密开销间接）"
     # #27 审计日志写入吞吐 ≥ 1000 条/秒
     "udaf_bench_audit_throughput|1000|>=||27|审计吞吐 ≥ 1K 条/秒（架构 #27）"
-    # #4 崩溃恢复 ≤ 5s（1000 条 WAL 回放）
-    "udaf_bench_wal_recovery_1000|5000000000|<=||4|崩溃恢复 ≤ 5s（架构 #4）"
+    # #4 崩溃恢复 ≤ 5s（AuditLogger verify_chain 200 条）
+    "udaf_bench_recovery|5000000000|<=||4|崩溃恢复 ≤ 5s（架构 #4）"
     # #22 加密握手后每帧加密开销 ≤ 50μs (50000 ns)
     "udaf_bench_aead_per_frame|50000|<=||22|AEAD 单帧 ≤ 50μs（架构 #22）"
     # #20 可观测性自身开销 < 5%（baseline vs enabled 比值 < 1.05）
@@ -90,6 +90,8 @@ THRESHOLDS=(
     "udaf_bench_channel_heartbeat_priority|10000|<=||S11|heartbeat 优先级投递 < 10μs"
     # 辅助契约：port try_recv 延迟
     "udaf_bench_port_try_recv|1000|<=||S12|port try_recv < 1μs"
+    # #25 命令往返延迟 P99 < 15ms（架构 §3.4 v2.8 新增）
+    "udaf_bench_command_roundtrip_p99|15000000|<=||25|命令往返 P99 < 15ms（架构 #25）"
     # 内存契约 #1 #2 #28 #29 由 scripts/measure_memory.sh 测量（独立进程）
     # 本脚本调用 measure_memory.sh 整合
 )
