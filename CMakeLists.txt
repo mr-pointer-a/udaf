@@ -56,6 +56,7 @@ option(UDAF_ENABLE_ASAN    "启用 AddressSanitizer（仅 Debug）" OFF)
 option(UDAF_ENABLE_UBSAN   "启用 UndefinedBehaviorSanitizer（仅 Debug）" OFF)
 option(UDAF_ENABLE_TSAN    "启用 ThreadSanitizer（仅 Debug）"  OFF)
 option(UDAF_ENABLE_COVERAGE"启用覆盖率（仅 Debug + GCC/Clang）" OFF)
+option(UDAF_ENABLE_PROPTEST "启用 RapidCheck 属性测试（自动发现）" OFF)
 
 # 设备端构建时强制关闭 tests/bench/fuzz（已由 toolchain 设置）
 if(UDAF_ENABLE_TESTS AND NOT DEFINED UDAF_TESTS_FORCED)
@@ -133,9 +134,16 @@ add_subdirectory(src/cli)
 
 # ---------- 测试 + 基准 ----------
 
-if(UDAF_ENABLE_TESTS)
+if(UDAF_ENABLE_TESTS OR UDAF_ENABLE_PROPTEST)
     enable_testing()
+endif()
+
+if(UDAF_ENABLE_TESTS)
     add_subdirectory(tests)
+endif()
+
+if(UDAF_ENABLE_PROPTEST)
+    add_subdirectory(tests/proptest)
 endif()
 
 if(UDAF_ENABLE_BENCH)
