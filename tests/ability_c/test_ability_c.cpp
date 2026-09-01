@@ -673,3 +673,27 @@ TEST(AbilityC_NetInfoNode, WorkerEmptyIfname) {
 
     EXPECT_TRUE(n.stop().is_ok());
 }
+
+// 不存在的 ifname → /sys/class/net/<name>/operstate 不存在 → fopen 失败 → up=false
+TEST(AbilityC_NetInfoNode, WorkerUnknownIfnameFopenFails) {
+    NetInfoNode n;
+    udaf::ability_b::node::NodeConfig cfg;
+    ASSERT_TRUE(n.init(cfg).is_ok());
+
+    udaf::ability_b::port::InputPort<NetInterfaceResult> rx("test_rx_unk", 16);
+    n.bind_result_target(&rx);
+
+    ASSERT_TRUE(n.start().is_ok());
+
+    NetInterfaceQuery q;
+    q.ifname = "udaf_nonexistent_iface_xyz_12345";
+    ASSERT_TRUE(n.in_query().push(q).is_ok());
+
+    auto recv_r = rx.recv(1000);
+    ASSERT_TRUE(recv_r.is_ok());
+    auto out = recv_r.value();
+    EXPECT_EQ(out.ifname, "udaf_nonexistent_iface_xyz_12345");
+    EXPECT_FALSE(out.up);
+
+    EXPECT_TRUE(n.stop().is_ok());
+}
