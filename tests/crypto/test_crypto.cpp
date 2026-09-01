@@ -919,6 +919,32 @@ TEST(UdafCrypto, HmacVerifyMismatchedLength) {
     EXPECT_TRUE(hmac_sha256_verify(key, std::span<const std::uint8_t>(msg, 5), sig.value()).is_ok());
 }
 
+// hmac.cpp:83-85 覆盖：hmac_sha256 内部错误时 verify 透传错误码
+// 用空 key 调用 verify → hmac_sha256 内部返回 INVALID_ARG → verify 应原样返回
+TEST(UdafCrypto, HmacVerifyPropagatesHmacError) {
+    std::vector<std::uint8_t> empty_key;  // 空 key
+    const std::uint8_t msg[] = {'h','i'};
+    std::vector<std::uint8_t> expected(32, 0xAB);
+    auto r = udaf::crypto::hmac_sha256_verify(
+        empty_key,
+        std::span<const std::uint8_t>(msg, 2),
+        expected);
+    ASSERT_TRUE(r.is_err());
+    // 应透传 hmac_sha256 的 INVALID_ARG（不是 CRYPTO_HMAC_MISMATCH）
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::INVALID_ARG);
+}
+
+// hmac.cpp:72-73 覆盖：HMAC 计算成功后 out.resize(out_len) 与 ok 返回
+// （用非 SHA256 块大小的 key 触发 OpenSSL 内部走完整 finalize 路径）
+TEST(UdafCrypto, HmacSha256SuccessReturnsCorrectLength) {
+    std::vector<std::uint8_t> key(100, 0x42);  // > SHA256 块大小 (64)
+    const std::uint8_t msg[] = {'a','b','c'};
+    auto r = udaf::crypto::hmac_sha256(key,
+        std::span<const std::uint8_t>(msg, 3));
+    ASSERT_TRUE(r.is_ok());
+    EXPECT_EQ(r.value().size(), 32u);  // SHA256 输出 32 字节
+}
+
 // ===== 覆盖率补充（v0.3.14）=====
 // psk.cpp:119-121 psk_aead_encrypt key 长度 != 32 → INVALID_ARG
 TEST(UdafCrypto, PskAeadEncryptInvalidKeyLength) {
