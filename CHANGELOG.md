@@ -1,5 +1,46 @@
 # 变更日志
 
+## v0.3.15 (2026-09-02) - F10~F19 多模块覆盖率提升 + 不可达路径分析
+
+### 覆盖率提升（累计 7 个模块）
+
+| 模块 | 起始覆盖率 | 终止覆盖率 | +行数 | commit |
+|---|---|---|---|---|
+| `tls_context.cpp` | 77.2% | 97.0% | +19 | 23f92e2 |
+| `tcp_channel.cpp` | 85.9% | 87.2% | +1（确认不可达） | e7321a2 |
+| `scanner.cpp` | 84.3% | 99.0% | +9 | 6972040 |
+| `wal.cpp` | 90.6% | 93.1% | +10 | 709a3c0 |
+| `hmac.cpp` | 88.6% | 90.9% | +1 | 8bcf135 |
+| `udp_socket.cpp` | 90.2% | 91.7% | +2 | 5a76a58 |
+| `serializer.cpp` | 92.3% | 96.2% | +2 | 5f84e15 |
+| `keystore.cpp` | 93.2% | 95.5% | +1 | 420cfab |
+| `inproc_channel.cpp` | 93.6% | 100% | +3 | 466b252 |
+| `nodes.cpp` | 96.9% | 97.8% | +5 | 229b332 |
+
+### 关键基础设施
+
+- **libudaf_fi.so** 共享故障注入库：`skip-first-N` 计数机制（`fail_rule_t.skip_first` + `_Atomic int count`）
+  - 环境变量格式扩展为 `name:errno[:ratio[:skip]]`
+  - 移除 ASAN/UBSan 编译选项（避免 LD_PRELOAD 子进程带 libasan 依赖）
+  - 测试用 `ASAN_OPTIONS=verify_asan_link_order=0` 关闭 link-order 校验
+- **fault_injection** 测试 binary 不再链接 udaf_fi 共享库（解决 double-free）
+
+### 不可达路径分析（确认实际可达上限）
+
+- **psk.cpp** 92.1%：14 行未覆盖均为 OpenSSL 内部错误处理路径（EVP_KDF_*、EVP_CIPHER_CTX_new OOM、AEAD 内部失败）或密码学不可达路径（HMAC-SHA256 永远返回 32B；mac 与 decrypt 共享同一 dk.enc_key，能通过 mac 校验的 ciphertext 必然能 decrypt）
+- **config_loader.cpp** 95.7%：L143 `!root` 早返回由于 yaml-cpp `YAML::Load("")` 返回有效 Null Node（bool()=true），不会进入 !root 分支
+- **scanner.cpp** 99.0%：L56 `if (!sock_)` 触发条件（sock_ == nullptr）需要在 `Scanner::create` 失败但 return nullptr 之前的状态，实际不可达
+- **nodes.cpp** 97.8%：L91/238/288 是右大括号（lcov 工具限制），L209-210 是 FileXferNode::write_block 的 fseek 失败（系统级难以可靠触发）
+
+### 文档同步
+
+- **README.md** 覆盖率口径更新：96.4% lines / 97.0% functions（src/ 源码口径）
+
+### 验证
+
+- 612 测试全绿（600 单元 + 9 集成 + 1 模糊 + 1 故障注入 + 1 端到端）
+- e2e 端到端真实运行：register 2 nodes → trust → discover → topology → run_remote → push_file → audit
+
 ## v0.3.14 (2026-09-01) - 静态分析零警告 + ConfigLoader 异常安全修复 + ADR 索引升级
 
 ### 新增
