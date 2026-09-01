@@ -66,8 +66,15 @@ Result<std::size_t> DynamicRingBuffer::read(std::span<std::byte> out) noexcept {
     if (out.size() < len) {
         return Result<std::size_t>::err(ErrorCode::PROTOCOL_TRUNCATED_BUFFER);
     }
-    std::memcpy(out.data(),
-                storage_.data() + index(t + kEntryHeaderBytes, capacity_), len);
+    const std::size_t data_pos = index(t + kEntryHeaderBytes, capacity_);
+    if (data_pos + len <= capacity_) {
+        std::memcpy(out.data(), storage_.data() + data_pos, len);
+    } else {
+        // 跨边界复制：先复制尾部剩余，再从头部补齐
+        const std::size_t first = capacity_ - data_pos;
+        std::memcpy(out.data(), storage_.data() + data_pos, first);
+        std::memcpy(out.data() + first, storage_.data(), len - first);
+    }
     tail_.store(t + kEntryHeaderBytes + len, std::memory_order_release);
     return Result<std::size_t>::ok(len);
 }

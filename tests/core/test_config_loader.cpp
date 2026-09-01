@@ -268,3 +268,212 @@ TEST(ConfigLoader, NetworkModeUnknownReturnsNullopt) {
     EXPECT_FALSE(parse_network_mode("").has_value());
     EXPECT_FALSE(parse_network_mode("psk ").has_value());
 }
+
+// ===== 错误处理分支覆盖（Round 6 - 提升覆盖率）=====
+
+// 覆盖 net 子表 YAML::Exception 分支（config_loader.cpp:46-48）
+TEST(ConfigLoader, NetSectionWrongTypeReturnsErr) {
+    const std::string yaml = R"YAML(
+node_id: "h1"
+node_role: "host"
+net:
+  bind_port: "not_a_number"
+)YAML";
+    ConfigLoader loader;
+    auto r = loader.load_from_string(yaml);
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), ErrorCode::CONFIG_INVALID_VALUE);
+}
+
+// 覆盖 log 子表 YAML::Exception 分支（config_loader.cpp:60-62）
+TEST(ConfigLoader, LogSectionWrongTypeReturnsErr) {
+    const std::string yaml = R"YAML(
+node_id: "h1"
+node_role: "host"
+log:
+  to_file: "should_be_bool"
+)YAML";
+    ConfigLoader loader;
+    auto r = loader.load_from_string(yaml);
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), ErrorCode::CONFIG_INVALID_VALUE);
+}
+
+// 覆盖 log.max_file_size 类型错误（max_file_size_bytes）
+TEST(ConfigLoader, LogSectionMaxFileSizeWrongTypeReturnsErr) {
+    const std::string yaml = R"YAML(
+node_id: "h1"
+node_role: "host"
+log:
+  max_file_size: "string_not_uint"
+)YAML";
+    ConfigLoader loader;
+    auto r = loader.load_from_string(yaml);
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), ErrorCode::CONFIG_INVALID_VALUE);
+}
+
+// 覆盖 log.max_rotated_files 类型错误
+TEST(ConfigLoader, LogSectionMaxRotatedFilesWrongTypeReturnsErr) {
+    const std::string yaml = R"YAML(
+node_id: "h1"
+node_role: "host"
+log:
+  max_rotated_files: "abc"
+)YAML";
+    ConfigLoader loader;
+    auto r = loader.load_from_string(yaml);
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), ErrorCode::CONFIG_INVALID_VALUE);
+}
+
+// 覆盖 crypto 子表 YAML::Exception 分支（config_loader.cpp:82-84）
+TEST(ConfigLoader, CryptoSectionWrongTypeReturnsErr) {
+    const std::string yaml = R"YAML(
+node_id: "h1"
+node_role: "host"
+crypto:
+  psk_path: ["array", "not", "string"]
+)YAML";
+    ConfigLoader loader;
+    auto r = loader.load_from_string(yaml);
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), ErrorCode::CONFIG_INVALID_VALUE);
+}
+
+// 覆盖 crypto.ca_path 类型错误
+TEST(ConfigLoader, CryptoSectionCaPathWrongTypeReturnsErr) {
+    const std::string yaml = R"YAML(
+node_id: "h1"
+node_role: "host"
+crypto:
+  ca_path: ["a", "b"]
+)YAML";
+    ConfigLoader loader;
+    auto r = loader.load_from_string(yaml);
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), ErrorCode::CONFIG_INVALID_VALUE);
+}
+
+// 覆盖 crypto.cert_path 类型错误
+TEST(ConfigLoader, CryptoSectionCertPathWrongTypeReturnsErr) {
+    const std::string yaml = R"YAML(
+node_id: "h1"
+node_role: "host"
+crypto:
+  cert_path: { a: b }
+)YAML";
+    ConfigLoader loader;
+    auto r = loader.load_from_string(yaml);
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), ErrorCode::CONFIG_INVALID_VALUE);
+}
+
+// 覆盖 peer_whitelist YAML::Exception 分支（config_loader.cpp:96-98）
+TEST(ConfigLoader, PeerWhitelistWrongTypeReturnsErr) {
+    const std::string yaml = R"YAML(
+node_id: "h1"
+node_role: "host"
+peer_whitelist:
+  - { nested: map }
+)YAML";
+    ConfigLoader loader;
+    auto r = loader.load_from_string(yaml);
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), ErrorCode::CONFIG_INVALID_VALUE);
+}
+
+// 覆盖根节点为空/falsy 的分支（config_loader.cpp:142-143）
+TEST(ConfigLoader, EmptyYamlReturnsErr) {
+    ConfigLoader loader;
+    auto r = loader.load_from_string("");
+    // yaml-cpp 对空串返回有效 scalar Node，!root 为假，进入 validate 报缺失
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), ErrorCode::CONFIG_MISSING_REQUIRED);
+}
+
+// 覆盖 net 错误传播分支（config_loader.cpp:150-153）
+TEST(ConfigLoader, NetSectionHeartbeatWrongTypeReturnsErr) {
+    const std::string yaml = R"YAML(
+node_id: "h1"
+node_role: "host"
+net:
+  heartbeat_interval_ms: "string_not_uint"
+)YAML";
+    ConfigLoader loader;
+    auto r = loader.load_from_string(yaml);
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), ErrorCode::CONFIG_INVALID_VALUE);
+}
+
+// 覆盖 net 错误传播：discovery_interval_sec 类型错误
+TEST(ConfigLoader, NetSectionDiscoveryWrongTypeReturnsErr) {
+    const std::string yaml = R"YAML(
+node_id: "h1"
+node_role: "host"
+net:
+  discovery_interval_sec: "wrong"
+)YAML";
+    ConfigLoader loader;
+    auto r = loader.load_from_string(yaml);
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), ErrorCode::CONFIG_INVALID_VALUE);
+}
+
+// 覆盖 net 错误传播：bind_address 类型错误
+TEST(ConfigLoader, NetSectionBindAddressWrongTypeReturnsErr) {
+    const std::string yaml = R"YAML(
+node_id: "h1"
+node_role: "host"
+net:
+  bind_address: ["array", "not", "string"]
+)YAML";
+    ConfigLoader loader;
+    auto r = loader.load_from_string(yaml);
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), ErrorCode::CONFIG_INVALID_VALUE);
+}
+
+// 覆盖 whitelist 不是 sequence 的分支（config_loader.cpp:91 条件为假）
+TEST(ConfigLoader, PeerWhitelistNotSequenceIgnored) {
+    // peer_whitelist 是 scalar 而非 sequence：不应抛异常，list 为空
+    const std::string yaml = R"YAML(
+node_id: "h1"
+node_role: "host"
+net:
+  bind_port: 9000
+  heartbeat_interval_ms: 1000
+  discovery_interval_sec: 30
+log:
+  level: "info"
+crypto:
+  mode: "psk"
+  psk_path: "/tmp/p"
+peer_whitelist: "scalar_value"
+)YAML";
+    ConfigLoader loader;
+    auto r = loader.load_from_string(yaml);
+    ASSERT_TRUE(r.is_ok());
+    EXPECT_TRUE(r.value().peer_whitelist.empty());
+}
+
+// 覆盖 to_string 函数的 NetworkMode::Pki 分支
+TEST(ConfigLoader, NetworkModeToStringAllBranches) {
+    EXPECT_EQ(to_string(NetworkMode::Psk), "psk");
+    EXPECT_EQ(to_string(NetworkMode::Pki), "pki");
+}
+
+// 覆盖 crypto.mode 大小写归一化（PSK 大写）
+TEST(ConfigLoader, CryptoModeUpperCasePsk) {
+    const std::string yaml = R"YAML(
+node_id: "h1"
+node_role: "host"
+crypto:
+  mode: "PSK"
+  psk_path: "/etc/udaf/psk.bin"
+)YAML";
+    ConfigLoader loader;
+    auto r = loader.load_from_string(yaml);
+    ASSERT_TRUE(r.is_ok());
+    EXPECT_EQ(r.value().crypto.mode, NetworkMode::Psk);
+}

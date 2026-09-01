@@ -508,6 +508,93 @@ TEST(UdafTransport, EndpointStructBasics) {
     EXPECT_TRUE(ep.is_broadcast);
 }
 
+// ===== Round 6 UDP 覆盖率补充 =====
+
+// 覆盖 recv 的 PSK 跳过分支（udp_socket.cpp:201 buf.size() <= 12）
+TEST(UdafTransport, RecvWithPskButShortPacketReturnsRaw) {
+    auto s1 = UdpSocket::create(0);
+    auto s2 = UdpSocket::create(0);
+    ASSERT_TRUE(s1.is_ok() && s2.is_ok());
+
+    // 设置 PSK 但发送短 payload（payload <= 12 时 buf.size() <= 12，跳过解密）
+    std::vector<std::uint8_t> psk(32, 0xCC);
+    s1.value()->set_psk(psk);
+    s2.value()->set_psk(psk);
+
+    // 发送空 payload：实际 to_send 是空向量，sendto 发送 0 字节
+    auto p2 = s2.value()->bound_port();
+    std::vector<std::uint8_t> empty_payload;
+    auto r = s1.value()->send(empty_payload, Endpoint{"127.0.0.1", p2, false});
+    ASSERT_TRUE(r.is_ok());
+
+    // 接收：buf.size()=0，不满足 >12，应返回原始 buf
+    auto recv = s2.value()->recv(1000);
+    ASSERT_TRUE(recv.is_ok());
+    EXPECT_TRUE(recv.value().empty());
+}
+
+// 覆盖 send 中 PSK 大小不为 32 跳过加密的分支（udp_socket.cpp:137-148）
+TEST(UdafTransport, SendWithInvalidPskSizeSkipsEncryption) {
+    auto s1 = UdpSocket::create(0);
+    auto s2 = UdpSocket::create(0);
+    ASSERT_TRUE(s1.is_ok() && s2.is_ok());
+
+    // 设置错误大小的 PSK（16 字节而非 32）
+    std::vector<std::uint8_t> bad_psk(16, 0xDD);
+    s1.value()->set_psk(bad_psk);
+
+    std::vector<std::uint8_t> msg{0x01, 0x02, 0x03, 0x04};
+    auto p2 = s2.value()->bound_port();
+    auto r = s1.value()->send(msg, Endpoint{"127.0.0.1", p2, false});
+    ASSERT_TRUE(r.is_ok());
+
+    auto recv = s2.value()->recv(1000);
+    ASSERT_TRUE(recv.is_ok());
+    // 不加密，原样返回
+    EXPECT_EQ(recv.value(), msg);
+}
+
+// 覆盖 send 中 PSK 设置但 payload 为空的分支（udp_socket.cpp:137 !payload.empty()）
+TEST(UdafTransport, SendWithPskButEmptyPayloadSkipsEncryption) {
+    auto s1 = UdpSocket::create(0);
+    auto s2 = UdpSocket::create(0);
+    ASSERT_TRUE(s1.is_ok() && s2.is_ok());
+
+    std::vector<std::uint8_t> psk(32, 0xEE);
+    s1.value()->set_psk(psk);
+
+    // 空 payload + PSK：跳过加密路径（!payload.empty() 为假）
+    auto p2 = s2.value()->bound_port();
+    std::vector<std::uint8_t> empty;
+    auto r = s1.value()->send(empty, Endpoint{"127.0.0.1", p2, false});
+    ASSERT_TRUE(r.is_ok());
+
+    auto recv = s2.value()->recv(1000);
+    ASSERT_TRUE(recv.is_ok());
+    EXPECT_TRUE(recv.value().empty());
+}
+
+// 覆盖 recv 在 PSK 模式下但 buf.size() == 12（恰好 nonce 大小）的边界
+TEST(UdafTransport, RecvWithPskExactlyNonceSizeSkipsDecrypt) {
+    auto s1 = UdpSocket::create(0);
+    auto s2 = UdpSocket::create(0);
+    ASSERT_TRUE(s1.is_ok() && s2.is_ok());
+
+    // s1 不设 PSK（明文发送 12 字节），s2 设 PSK
+    // s2 接收时 buf.size()==12，不满足 >12，跳过解密分支
+    std::vector<std::uint8_t> psk(32, 0xFF);
+    s2.value()->set_psk(psk);
+
+    std::vector<std::uint8_t> msg(12, 0xAB);
+    auto p2 = s2.value()->bound_port();
+    auto r = s1.value()->send(msg, Endpoint{"127.0.0.1", p2, false});
+    ASSERT_TRUE(r.is_ok());
+
+    auto recv = s2.value()->recv(1000);
+    ASSERT_TRUE(recv.is_ok());
+    EXPECT_EQ(recv.value(), msg);  // 原样返回
+}
+
 // ===== 边缘用例：覆盖 registry 全部错误分支 =====
 
 TEST(UdafRegistry, RegisterEmptyNodeIdReturnsErr) {

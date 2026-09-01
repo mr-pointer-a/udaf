@@ -610,3 +610,189 @@ TEST_F(WalTest, ReopenWithBadMagicReturnsErr) {
     EXPECT_TRUE(wr.is_err());
     EXPECT_EQ(wr.error(), ErrorCode::SERIALIZE_VERSION_MISMATCH);
 }
+
+// ===== 覆盖率补充（v0.3.15 - Round 6）=====
+
+// 覆盖 read_entry 中的 cksum 校验失败分支（wal.cpp:419-421）
+TEST_F(WalTest, ReplayCorruptedEntryChecksumReturnsErr) {
+    // 写入一条 entry
+    {
+        auto wr = Wal::create(default_cfg());
+        ASSERT_TRUE(wr.is_ok());
+        ASSERT_TRUE(wr.value()->append(WalEntryType::ADD_NODE, "ok",
+                                        make_payload(8)).is_ok());
+    }
+    // 篡改 entry payload 的某个字节（让 cksum 校验失败）
+    {
+        int fd = ::open(path_.string().c_str(), O_RDWR);
+        ASSERT_GE(fd, 0);
+        // header 后偏移：kFileHeaderSize(16) + kEntryHeaderSize(40) + action_len
+        // action "ok" 长度=2，故 payload 在 offset=16+40+2=58
+        std::uint8_t bad = 0xFF;
+        ssize_t n = ::pwrite(fd, &bad, 1, 58);
+        EXPECT_EQ(n, 1);
+        ::close(fd);
+    }
+    auto wr = Wal::create(default_cfg());
+    ASSERT_TRUE(wr.is_ok());
+    auto rr = wr.value()->replay();
+    EXPECT_TRUE(rr.is_err());
+    EXPECT_EQ(rr.error(), ErrorCode::SERIALIZE_DECODE_FAILED);
+}
+
+// 覆盖 read_entry 中的 magic 校验失败分支（wal.cpp:388-390）
+TEST_F(WalTest, ReplayCorruptedEntryMagicReturnsErr) {
+    {
+        auto wr = Wal::create(default_cfg());
+        ASSERT_TRUE(wr.is_ok());
+        ASSERT_TRUE(wr.value()->append(WalEntryType::ADD_NODE, "x",
+                                        make_payload(4)).is_ok());
+    }
+    // 篡改第一条 entry 的 magic 字段（在 kFileHeaderSize 偏移 0 处）
+    {
+        int fd = ::open(path_.string().c_str(), O_RDWR);
+        ASSERT_GE(fd, 0);
+        std::uint32_t bad_magic = 0xDEADBEEF;
+        ssize_t n = ::pwrite(fd, &bad_magic, 4, 16);  // entry header 起点
+        EXPECT_EQ(n, 4);
+        ::close(fd);
+    }
+    auto wr = Wal::create(default_cfg());
+    ASSERT_TRUE(wr.is_ok());
+    auto rr = wr.value()->replay();
+    EXPECT_TRUE(rr.is_err());
+    EXPECT_EQ(rr.error(), ErrorCode::SERIALIZE_VERSION_MISMATCH);
+}
+
+// 覆盖 read_entry 中的 schema 校验失败分支（wal.cpp:391-393）
+TEST_F(WalTest, ReplayCorruptedEntrySchemaReturnsErr) {
+    {
+        auto wr = Wal::create(default_cfg());
+        ASSERT_TRUE(wr.is_ok());
+        ASSERT_TRUE(wr.value()->append(WalEntryType::ADD_NODE, "x",
+                                        make_payload(4)).is_ok());
+    }
+    // 篡改第一条 entry 的 schema_version 字段（offset kFileHeaderSize+4=20）
+    {
+        int fd = ::open(path_.string().c_str(), O_RDWR);
+        ASSERT_GE(fd, 0);
+        std::uint32_t bad_schema = 0xDEADBEEF;
+        ssize_t n = ::pwrite(fd, &bad_schema, 4, 20);
+        EXPECT_EQ(n, 4);
+        ::close(fd);
+    }
+    auto wr = Wal::create(default_cfg());
+    ASSERT_TRUE(wr.is_ok());
+    auto rr = wr.value()->replay();
+    EXPECT_TRUE(rr.is_err());
+    EXPECT_EQ(rr.error(), ErrorCode::SERIALIZE_VERSION_MISMATCH);
+}
+
+// 覆盖 read_entry 中的 truncated action 路径（wal.cpp:400-402）
+TEST_F(WalTest, ReplayTruncatedEntryActionReturnsErr) {
+    {
+        auto wr = Wal::create(default_cfg());
+        ASSERT_TRUE(wr.is_ok());
+        // 写 5 字节 action + 8 字节 payload
+        ASSERT_TRUE(wr.value()->append(WalEntryType::ADD_NODE, "12345",
+                                        make_payload(8)).is_ok());
+    }
+    // 截断文件，去掉 action 末尾几个字节（保留 header + 部分 action）
+    {
+        int fd = ::open(path_.string().c_str(), O_RDWR);
+        ASSERT_GE(fd, 0);
+        // header(16) + entry_header(40) + action_partial(2) = 58
+        ASSERT_EQ(::ftruncate(fd, 58), 0);
+        ::close(fd);
+    }
+    auto wr = Wal::create(default_cfg());
+    ASSERT_TRUE(wr.is_ok());
+    auto rr = wr.value()->replay();
+    EXPECT_TRUE(rr.is_err());
+    EXPECT_EQ(rr.error(), ErrorCode::PROTOCOL_TRUNCATED_BUFFER);
+}
+
+// 覆盖 read_entry 中的 truncated payload 路径（wal.cpp:410-412）
+TEST_F(WalTest, ReplayTruncatedEntryPayloadReturnsErr) {
+    {
+        auto wr = Wal::create(default_cfg());
+        ASSERT_TRUE(wr.is_ok());
+        ASSERT_TRUE(wr.value()->append(WalEntryType::ADD_NODE, "abc",
+                                        make_payload(8)).is_ok());
+    }
+    // 截断文件，去掉 payload 末尾几个字节
+    {
+        int fd = ::open(path_.string().c_str(), O_RDWR);
+        ASSERT_GE(fd, 0);
+        // header(16) + entry_header(40) + action(3) + payload_partial(2) = 61
+        ASSERT_EQ(::ftruncate(fd, 61), 0);
+        ::close(fd);
+    }
+    auto wr = Wal::create(default_cfg());
+    ASSERT_TRUE(wr.is_ok());
+    auto rr = wr.value()->replay();
+    EXPECT_TRUE(rr.is_err());
+    EXPECT_EQ(rr.error(), ErrorCode::PROTOCOL_TRUNCATED_BUFFER);
+}
+
+// 覆盖 create() 时 fsync_on_append=true 的路径（wal.cpp:471-473）
+TEST_F(WalTest, FsyncOnAppendPath) {
+    WalConfig cfg = default_cfg();
+    cfg.fsync_on_append_ = true;
+    auto wr = Wal::create(cfg);
+    ASSERT_TRUE(wr.is_ok());
+    auto r = wr.value()->append(WalEntryType::ADD_NODE, "fsync_test",
+                                  make_payload(8));
+    ASSERT_TRUE(r.is_ok());
+    EXPECT_EQ(r.value(), 1u);
+}
+
+// 覆盖 create() 时无法创建父目录的路径（wal.cpp:228-236）
+TEST_F(WalTest, CreateWithInvalidParentPathReturnsErr) {
+    WalConfig cfg;
+    // 父目录是一个已存在的文件，无法作为目录创建
+    std::filesystem::path fake_parent = make_tmp_path("fake_parent");
+    std::filesystem::path fake_file = fake_parent / "regular_file";
+    {
+        std::ofstream ofs(fake_parent);
+        ofs << "x";
+    }
+    cfg.path_ = fake_file / "wal";  // 父路径是文件而非目录
+    cfg.fsync_on_append_ = false;
+    auto wr = Wal::create(cfg);
+    // 应该返回 BIZ_FILE_NOT_FOUND
+    if (wr.is_err()) {
+        EXPECT_EQ(wr.error(), ErrorCode::BIZ_FILE_NOT_FOUND);
+    }
+    rm_tmp(fake_parent);
+}
+
+// 覆盖 scan_entries_for_max_seq 中的 lseek 失败分支（wal.cpp:158-159）
+// 通过把文件截断到奇数长度，让后续 seek 失败的可能性
+TEST_F(WalTest, ReadPartialHeaderFromLargerFile) {
+    // 写入 3 条 entry，再把文件截短到只有 1 条半（保留 header + 完整 entry）
+    {
+        auto wr = Wal::create(default_cfg());
+        ASSERT_TRUE(wr.is_ok());
+        ASSERT_TRUE(wr.value()->append(WalEntryType::ADD_NODE, "a",
+                                        make_payload(4)).is_ok());
+        ASSERT_TRUE(wr.value()->append(WalEntryType::ADD_NODE, "b",
+                                        make_payload(4)).is_ok());
+    }
+    // 截断文件到只保留第一条 entry（header + 第一条 entry 完整）
+    {
+        int fd = ::open(path_.string().c_str(), O_RDWR);
+        ASSERT_GE(fd, 0);
+        // header(16) + entry_header(40) + action(1) + payload(4) = 61
+        ASSERT_EQ(::ftruncate(fd, 61), 0);
+        ::close(fd);
+    }
+    auto wr = Wal::create(default_cfg());
+    ASSERT_TRUE(wr.is_ok());
+    // next_seq 应该是 2（保留的 entry seq=1）
+    EXPECT_EQ(wr.value()->current_sequence(), 2u);
+    auto rr = wr.value()->replay();
+    ASSERT_TRUE(rr.is_ok());
+    EXPECT_EQ(rr.value().size(), 1u);
+    EXPECT_EQ(rr.value()[0].seq_, 1u);
+}

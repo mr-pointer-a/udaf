@@ -878,3 +878,77 @@ TEST(UdafCrypto, PskServerMalformedRequestIdentityLengthExceeds) {
     EXPECT_TRUE(r.is_err());
     EXPECT_FALSE(server->is_handshake_done());
 }
+
+// ===== Round 6 覆盖率补充 =====
+
+// 覆盖 tls_context.cpp:144 create_server_pki key file 加载失败
+TEST(UdafCrypto, TlsContextServerPkiInvalidKeyFileReturnsNull) {
+    TmpDir tmp;
+    auto cert = tmp.p() / "cert.pem";
+    auto good_key = tmp.p() / "good_key.pem";
+    auto bad_key = tmp.p() / "bad_key.pem";
+    ASSERT_TRUE(generate_self_signed(cert, good_key));
+
+    // 创建第二个 key 文件（与 cert 不匹配的私钥）
+    ASSERT_TRUE(generate_self_signed(cert, bad_key));  // 实际上还是匹配的
+
+    // 用一个明显不是 PEM 格式的文件作为 key
+    std::ofstream(bad_key) << "this is not a PEM key file";
+
+    auto srv = TlsContext::create_server_pki(cert, bad_key);
+    EXPECT_EQ(srv, nullptr);  // SSL_CTX_use_PrivateKey_file 失败
+}
+
+// 覆盖 tls_context.cpp:147 create_server_pki check_private_key 失败
+TEST(UdafCrypto, TlsContextServerPkiMismatchedCertKeyReturnsNull) {
+    TmpDir tmp;
+    auto cert1 = tmp.p() / "cert1.pem";
+    auto key1  = tmp.p() / "key1.pem";
+    auto key2  = tmp.p() / "key2.pem";
+
+    ASSERT_TRUE(generate_self_signed(cert1, key1));
+    // 生成另一对独立的 cert+key
+    ASSERT_TRUE(generate_self_signed(tmp.p() / "cert2.pem", key2));
+
+    // 用 cert1 + key2（不匹配的私钥）→ check_private_key 应失败
+    auto srv = TlsContext::create_server_pki(cert1, key2);
+    EXPECT_EQ(srv, nullptr);
+}
+
+// 覆盖 tls_context.cpp:166-172 create_client_pki ca_file 空字符串跳过 + ca_file 不存在返回 nullptr
+TEST(UdafCrypto, TlsContextClientPkiEmptyCaFileSkipsVerify) {
+    TmpDir tmp;
+    auto cert = tmp.p() / "cert.pem";
+    auto key  = tmp.p() / "key.pem";
+    ASSERT_TRUE(generate_self_signed(cert, key));
+
+    // ca_file 空字符串 → 跳过 SSL_CTX_load_verify_locations
+    auto cli = TlsContext::create_client_pki("", cert, key);
+    EXPECT_NE(cli, nullptr);  // 应成功创建
+}
+
+// 覆盖 tls_context.cpp:173-179 create_client_pki cert/key 提供但加载失败
+TEST(UdafCrypto, TlsContextClientPkiBadCertFileReturnsNull) {
+    TmpDir tmp;
+    auto cert = tmp.p() / "cert.pem";
+    auto key  = tmp.p() / "key.pem";
+    auto bad_cert = tmp.p() / "bad_cert.pem";
+    ASSERT_TRUE(generate_self_signed(cert, key));
+    std::ofstream(bad_cert) << "this is not a valid cert";
+
+    auto cli = TlsContext::create_client_pki("", bad_cert, key);
+    EXPECT_EQ(cli, nullptr);  // SSL_CTX_use_certificate_file 失败
+}
+
+// 覆盖 tls_context.cpp:177-179 create_client_pki cert 有效但 key 加载失败
+TEST(UdafCrypto, TlsContextClientPkiBadKeyFileReturnsNull) {
+    TmpDir tmp;
+    auto cert = tmp.p() / "cert.pem";
+    auto key  = tmp.p() / "key.pem";
+    auto bad_key = tmp.p() / "bad_key.pem";
+    ASSERT_TRUE(generate_self_signed(cert, key));
+    std::ofstream(bad_key) << "this is not a valid key";
+
+    auto cli = TlsContext::create_client_pki("", cert, bad_key);
+    EXPECT_EQ(cli, nullptr);  // SSL_CTX_use_PrivateKey_file 失败
+}
