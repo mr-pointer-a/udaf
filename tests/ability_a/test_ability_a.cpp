@@ -26,7 +26,9 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <netinet/in.h>
 #include <span>
+#include <sys/socket.h>
 #include <thread>
 #include <vector>
 
@@ -883,6 +885,7 @@ using udaf::ability_a::discovery::AdvertiserConfig;
 using udaf::ability_a::discovery::AdvertisementPayload;
 using udaf::ability_a::discovery::Scanner;
 using udaf::ability_a::discovery::ScannerConfig;
+using udaf::ability_a::discovery::kDiscoveryHeaderSize;
 
 // 构造一个合法的 discovery 帧（48B header + payload），供 Scanner::handle_frame 直接消费
 namespace {
@@ -1070,4 +1073,250 @@ TEST(UdafAdvertiser, CreateWithPskSucceeds) {
     std::vector<std::uint8_t> psk(32, 0xA5);
     auto adv = Advertiser::create(std::move(p), cfg, psk);
     ASSERT_NE(adv, nullptr);
+}
+
+// ============================================================
+// F7 新增覆盖：broadcast_once / run() / 线程生命周期 / 错误路径
+// ============================================================
+
+// 手动触发一次广播：应返回 OK 且 size >= kDiscoveryHeaderSize + payload 长度
+TEST(UdafAdvertiser, BroadcastOnceReturnsOk) {
+    AdvertiserConfig cfg;
+    cfg.bind_port = 0;
+    cfg.broadcast_port = 29901;
+    cfg.period = std::chrono::seconds(60);
+
+    AdvertisementPayload p;
+    p.node_id = "adv-broadcast-once";
+    p.hostname = "adv-host-1";
+    p.bind_address = "127.0.0.1";
+    p.bind_port = 9001;
+    p.services = {"cmd-exec", "file-xfer"};
+
+    auto adv = Advertiser::create(std::move(p), cfg);
+    ASSERT_NE(adv, nullptr);
+    auto r = adv->broadcast_once();
+    EXPECT_TRUE(r.is_ok());
+    EXPECT_GT(r.value(), kDiscoveryHeaderSize);
+}
+
+TEST(UdafAdvertiser, BroadcastOnceWithPskReturnsOk) {
+    AdvertiserConfig cfg;
+    cfg.bind_port = 0;
+    cfg.broadcast_port = 29902;
+    cfg.period = std::chrono::seconds(60);
+
+    AdvertisementPayload p;
+    p.node_id = "adv-broadcast-psk";
+    p.hostname = "adv-host-2";
+    p.bind_address = "127.0.0.1";
+    p.bind_port = 9002;
+    p.services = {"net-info"};
+
+    std::vector<std::uint8_t> psk(32, 0xB6);
+    auto adv = Advertiser::create(std::move(p), cfg, psk);
+    ASSERT_NE(adv, nullptr);
+    auto r = adv->broadcast_once();
+    EXPECT_TRUE(r.is_ok());
+    // 加密后帧长 >= header + plaintext 长度 + 12B nonce
+    EXPECT_GT(r.value(), kDiscoveryHeaderSize + 12u);
+}
+
+// 30 秒内的第二次广播应被 UDP 层速率限制拦截
+TEST(UdafAdvertiser, BroadcastOnceRateLimited) {
+    AdvertiserConfig cfg;
+    cfg.bind_port = 0;
+    cfg.broadcast_port = 29903;
+    cfg.period = std::chrono::seconds(60);
+
+    AdvertisementPayload p;
+    p.node_id = "adv-rate-limit";
+    p.hostname = "adv-host-3";
+    p.bind_address = "127.0.0.1";
+    p.bind_port = 9003;
+    p.services = {"x"};
+
+    auto adv = Advertiser::create(std::move(p), cfg);
+    ASSERT_NE(adv, nullptr);
+    EXPECT_TRUE(adv->broadcast_once().is_ok());
+    // 第二次：仍在 30s 节流窗口内 → NET_RATE_LIMITED
+    auto r2 = adv->broadcast_once();
+    EXPECT_TRUE(r2.is_err());
+    EXPECT_EQ(r2.error(), udaf::core::ErrorCode::NET_RATE_LIMITED);
+}
+
+// start() + stop() 后再 broadcast_once()：sock_ 被 close → NET_SOCKET_CLOSED
+// 必须先 start（让 running_=true）再 stop 才能真正关闭 sock_。
+// 直接 stop() 不 start() 会因 running_.exchange(false) 返回 false 提前 return。
+TEST(UdafAdvertiser, BroadcastOnceAfterStopReturnsSocketClosed) {
+    AdvertiserConfig cfg;
+    cfg.bind_port = 0;
+    cfg.broadcast_port = 29904;
+    cfg.period = std::chrono::seconds(60);
+
+    AdvertisementPayload p;
+    p.node_id = "adv-after-stop";
+    p.hostname = "adv-host-4";
+    p.bind_address = "127.0.0.1";
+    p.bind_port = 9004;
+    p.services = {"y"};
+
+    auto adv = Advertiser::create(std::move(p), cfg);
+    ASSERT_NE(adv, nullptr);
+    EXPECT_TRUE(adv->start().is_ok());
+    adv->stop();  // 此时 running_=true → 实际关闭 sock_
+    auto r = adv->broadcast_once();
+    EXPECT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::NET_SOCKET_CLOSED);
+}
+
+// 启动 + 短周期后台线程 + 停止：线程应正确响应 running_=false 并退出
+// 不验证广播次数（UDP 节流会拦住大部分调用），只验证线程生命周期不卡死
+TEST(UdafAdvertiser, RunLoopExitsCleanlyOnStop) {
+    AdvertiserConfig cfg;
+    cfg.bind_port = 0;
+    cfg.broadcast_port = 29905;
+    cfg.period = std::chrono::seconds(0);  // period=0 → run loop 立刻重试，可验证线程响应 stop
+
+    AdvertisementPayload p;
+    p.node_id = "adv-run-loop";
+    p.hostname = "adv-host-5";
+    p.bind_address = "127.0.0.1";
+    p.bind_port = 9005;
+    p.services = {"z"};
+
+    auto adv = Advertiser::create(std::move(p), cfg);
+    ASSERT_NE(adv, nullptr);
+    EXPECT_TRUE(adv->start().is_ok());
+    EXPECT_TRUE(adv->running());
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    // stop 必须在合理时间内返回（< 2s）
+    auto t0 = std::chrono::steady_clock::now();
+    adv->stop();
+    auto us = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+    EXPECT_LT(us, 2000) << "stop took " << us << "ms";
+    EXPECT_FALSE(adv->running());
+}
+
+// 重复 start() 第二次返回 RESOURCE_BUSY
+TEST(UdafAdvertiser, StartTwiceReturnsBusy) {
+    AdvertiserConfig cfg;
+    cfg.bind_port = 0;
+    cfg.broadcast_port = 29906;
+    cfg.period = std::chrono::seconds(60);
+
+    AdvertisementPayload p;
+    p.node_id = "adv-start-twice";
+    p.hostname = "adv-host-6";
+    p.bind_address = "127.0.0.1";
+    p.bind_port = 9006;
+    p.services = {};
+
+    auto adv = Advertiser::create(std::move(p), cfg);
+    ASSERT_NE(adv, nullptr);
+    EXPECT_TRUE(adv->start().is_ok());
+    auto r = adv->start();
+    EXPECT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::RESOURCE_BUSY);
+    adv->stop();
+}
+
+// 未 start 直接 stop：不崩溃、不抛异常
+TEST(UdafAdvertiser, StopWithoutStartIsSafe) {
+    AdvertiserConfig cfg;
+    cfg.bind_port = 0;
+    cfg.broadcast_port = 29907;
+    cfg.period = std::chrono::seconds(60);
+
+    AdvertisementPayload p;
+    p.node_id = "adv-stop-without-start";
+    p.hostname = "adv-host-7";
+    p.bind_address = "127.0.0.1";
+    p.bind_port = 9007;
+    p.services = {};
+
+    auto adv = Advertiser::create(std::move(p), cfg);
+    ASSERT_NE(adv, nullptr);
+    EXPECT_NO_THROW(adv->stop());
+    EXPECT_FALSE(adv->running());
+}
+
+// 重复 stop() 不崩溃（幂等）
+TEST(UdafAdvertiser, DoubleStopIsSafe) {
+    AdvertiserConfig cfg;
+    cfg.bind_port = 0;
+    cfg.broadcast_port = 29908;
+    cfg.period = std::chrono::seconds(60);
+
+    AdvertisementPayload p;
+    p.node_id = "adv-double-stop";
+    p.hostname = "adv-host-8";
+    p.bind_address = "127.0.0.1";
+    p.bind_port = 9008;
+    p.services = {};
+
+    auto adv = Advertiser::create(std::move(p), cfg);
+    ASSERT_NE(adv, nullptr);
+    adv->stop();
+    EXPECT_NO_THROW(adv->stop());
+    EXPECT_FALSE(adv->running());
+}
+
+// 三次 start/stop 循环：start 与 stop 都应正确响应 running_ 状态翻转
+TEST(UdafAdvertiser, StartStopCycleRepeated) {
+    AdvertiserConfig cfg;
+    cfg.bind_port = 0;
+    cfg.broadcast_port = 29909;
+    cfg.period = std::chrono::seconds(60);
+
+    AdvertisementPayload p;
+    p.node_id = "adv-cycle";
+    p.hostname = "adv-host-9";
+    p.bind_address = "127.0.0.1";
+    p.bind_port = 9009;
+    p.services = {};
+
+    auto adv = Advertiser::create(std::move(p), cfg);
+    ASSERT_NE(adv, nullptr);
+    for (int i = 0; i < 3; ++i) {
+        EXPECT_TRUE(adv->start().is_ok()) << "iter " << i;
+        EXPECT_TRUE(adv->running()) << "iter " << i;
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        adv->stop();
+        EXPECT_FALSE(adv->running()) << "iter " << i;
+    }
+}
+
+// 端口冲突：先开一个 UDP socket 占住端口，再创建 Advertiser 使用同端口 → nullptr
+// 覆盖 advertiser.cpp:26 (UdpSocket::create 失败 → return nullptr)
+TEST(UdafAdvertiser, CreateReturnsNullWhenBindPortBusy) {
+    // 先占一个端口
+    int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+    ASSERT_GE(fd, 0);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = htons(0);  // 自动分配
+    ASSERT_EQ(::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)), 0);
+    sockaddr_in actual{};
+    socklen_t len = sizeof(actual);
+    ASSERT_EQ(::getsockname(fd, reinterpret_cast<sockaddr*>(&actual), &len), 0);
+    std::uint16_t busy_port = ntohs(actual.sin_port);
+
+    // 用同端口创建 Advertiser → UdpSocket::create 失败 → create 返回 nullptr
+    AdvertiserConfig cfg;
+    cfg.bind_port = busy_port;
+    cfg.broadcast_port = 29910;
+    cfg.period = std::chrono::seconds(60);
+    AdvertisementPayload p;
+    p.node_id = "adv-port-busy";
+    p.hostname = "adv-host-10";
+    p.bind_address = "127.0.0.1";
+    p.bind_port = 9010;
+    p.services = {};
+    auto adv = Advertiser::create(std::move(p), cfg);
+    EXPECT_EQ(adv, nullptr);
+
+    ::close(fd);
 }
