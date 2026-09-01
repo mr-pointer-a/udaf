@@ -1,5 +1,42 @@
 # 变更日志
 
+## v0.3.16 (2026-09-02) - libudaf_fi 警告清理 + pki.cpp 覆盖率提升 + 编译选项分流
+
+### 覆盖率提升
+
+| 模块 | 起始覆盖率 | 终止覆盖率 | +行数 | commit |
+|---|---|---|---|---|
+| `pki.cpp` | 0% | 91.0% | +71 | 7c1e060 |
+
+### 新增测试
+
+- **PkiHandshakeFullRoundTrip**（350ms）：完整 TLS 1.3 握手 + encrypt/decrypt + fingerprint
+- **PkiHandshakeCreateRejectsInvalidInput**（350ms）：null ctx / fd < 0 / ctx 无效三种拒绝
+- **PkiHandshakeStepStaysInTerminalState**（182ms）：Done 终态保持（line 57-58）
+- **PkiHandshakeEncryptDecryptBeforeDoneFails**（150ms）：未握手时调用返回 NOT_IMPLEMENTED
+- **PkiHandshakeStepFailsWhenPeerSilent**（173ms）：畸形字节触发 Failed（line 73-79）
+
+### 构建系统
+
+- **cmake/CompilerWarnings.cmake**：拆分为 `UDAF_C_WARNINGS`（C/C++ 通用）+ `UDAF_CXX_WARNINGS`（C++ 专用）
+  - 使用 `$<$<COMPILE_LANGUAGE:CXX>:...>` 生成器表达式仅对 CXX 目标生效
+  - 避免 `-Wnon-virtual-dtor / -Wold-style-cast` 等 CXX-only 警告泄漏给 .c 文件
+- **libudaf_fi.c** 警告全部清零（`-Wcomment` / `-Wdiscarded-qualifiers` / `-Wnonnull-compare`）
+
+### 不可达路径分析（确认实际可达上限）
+
+- **pki.cpp** 91.0%：7 行未覆盖均为 OpenSSL API 错误分支
+  - L70-72：`WantsRead`/`WantsWrite` 状态设置（异步 partial step，构造复杂）
+  - L96-97：`X509_digest` 失败（合法证书 + 损坏的 EVP 上下文）
+  - L113/127：`SSL_write` 失败（已握手连接上几乎不会失败）
+  - L132：`SSL_read` 失败（对端关闭场景，时序难控）
+
+### 验证
+
+- 67 crypto 测试全绿（5 新增）
+- 全量 ctest：615/616 通过（仅 Debug 模式 `UdafObs_Meter.PerfContract20CpuOverhead` perf 契约失败，非回归）
+- 整体行覆盖率 92.6%（lib+src 口径）
+
 ## v0.3.15 (2026-09-02) - F10~F19 多模块覆盖率提升 + 不可达路径分析
 
 ### 覆盖率提升（累计 7 个模块）
