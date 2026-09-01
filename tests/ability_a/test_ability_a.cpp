@@ -1320,3 +1320,179 @@ TEST(UdafAdvertiser, CreateReturnsNullWhenBindPortBusy) {
 
     ::close(fd);
 }
+
+// ============================================================
+// F8 新增覆盖：scanner.cpp 未覆盖分支
+// ============================================================
+
+// 构造 PSK 模式的 Scanner（覆盖 scanner.cpp:22 psk_.assign）
+TEST(UdafScanner, CreateWithPskSucceeds) {
+    ServiceRegistry reg;
+    std::vector<std::uint8_t> psk(32, 0xC3);
+    auto scanner = Scanner::create(&reg, ScannerConfig{}, psk);
+    ASSERT_NE(scanner, nullptr);
+}
+
+// version != kDiscoveryVersion → SERIALIZE_VERSION_MISMATCH
+// 覆盖 scanner.cpp:82-84
+TEST(UdafScanner, BadVersionFrameReturnsVersionMismatch) {
+    ServiceRegistry reg;
+    auto scanner = Scanner::create(&reg, ScannerConfig{});
+    ASSERT_NE(scanner, nullptr);
+    auto frame = make_valid_frame("badver-node");
+    // 篡改 version 字段（offset 4..7）为 0x9999_9999
+    frame[4] = 0x99; frame[5] = 0x99; frame[6] = 0x99; frame[7] = 0x99;
+    auto r = scanner->handle_frame(frame);
+    EXPECT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::SERIALIZE_VERSION_MISMATCH);
+}
+
+// MAC 校验失败 → 静默丢弃（返回 Ok(false)）
+// 覆盖 scanner.cpp:124-127
+TEST(UdafScanner, BadMacReturnsOkFalseSilently) {
+    ServiceRegistry reg;
+    auto scanner = Scanner::create(&reg, ScannerConfig{});
+    ASSERT_NE(scanner, nullptr);
+    auto frame = make_valid_frame("badmac-node");
+    // 篡改 MAC 字段（offset 16..48）
+    for (std::size_t i = 16; i < 48; ++i) frame[i] ^= 0xFF;
+    auto r = scanner->handle_frame(frame);
+    EXPECT_TRUE(r.is_ok());
+    EXPECT_FALSE(r.value());
+}
+
+// 空 node_id payload → SERIALIZE_DECODE_FAILED
+// 覆盖 scanner.cpp:131-133
+TEST(UdafScanner, EmptyNodeIdReturnsDecodeFailed) {
+    ServiceRegistry reg;
+    auto scanner = Scanner::create(&reg, ScannerConfig{});
+    ASSERT_NE(scanner, nullptr);
+
+    // 构造 payload 为空 node_id 的合法帧
+    AdvertisementPayload p;
+    p.node_id      = "";  // 故意空
+    p.hostname     = "ghost";
+    p.bind_address = "127.0.0.1";
+    p.bind_port    = 9200;
+    p.services     = {"x"};
+    auto payload = udaf::ability_a::discovery::serialize_payload(p);
+    constexpr std::size_t kHeaderSize = 48;
+    std::vector<std::uint8_t> frame(kHeaderSize + payload.size(), 0);
+    frame[0] = 0x44; frame[1] = 0x43; frame[2] = 0x41; frame[3] = 0x44;
+    frame[4] = 0; frame[5] = 0; frame[6] = 0; frame[7] = 1;
+    std::vector<std::uint8_t> mac_data;
+    mac_data.insert(mac_data.end(), frame.begin() + 8, frame.begin() + 16);
+    mac_data.insert(mac_data.end(), payload.begin(), payload.end());
+    std::vector<std::uint8_t> mac_key(32, 0);
+    auto mac = udaf::crypto::hmac_sha256(mac_key, mac_data);
+    if (mac.is_ok()) std::memcpy(frame.data() + 16, mac.value().data(), 32);
+    std::memcpy(frame.data() + kHeaderSize, payload.data(), payload.size());
+
+    auto r = scanner->handle_frame(frame);
+    EXPECT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::SERIALIZE_DECODE_FAILED);
+}
+
+// replay window 过期清理：构造两个不同 nonce 的帧，先记录 nonce_A，
+// 用 replay_window=0s（立即过期），再 send frame_B → 应清理 nonce_A 后注册 frame_B
+// 覆盖 scanner.cpp:101-107
+TEST(UdafScanner, ReplayWindowCleanupRemovesExpired) {
+    ServiceRegistry reg;
+    ScannerConfig cfg;
+    cfg.replay_window = std::chrono::seconds(0);  // 立即过期
+    auto scanner = Scanner::create(&reg, cfg);
+    ASSERT_NE(scanner, nullptr);
+
+    // 先注册 nonce_A
+    std::array<std::uint8_t, 8> nonce_a{};
+    nonce_a[0] = 0xAA;
+    auto frame_a = make_valid_frame("replay-a", nonce_a);
+    auto r_a = scanner->handle_frame(frame_a);
+    EXPECT_TRUE(r_a.is_ok());
+    EXPECT_TRUE(r_a.value());
+    EXPECT_EQ(scanner->seen_count(), 1u);
+
+    // 短睡眠确保时间前进（steady_clock 至少 1ns）
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+    // 用 nonce_B 重新发送 frame_a（模拟重发但 nonce 不同 → 触发清理旧 nonce）
+    std::array<std::uint8_t, 8> nonce_b{};
+    nonce_b[0] = 0xBB;
+    auto frame_b = make_valid_frame("replay-b", nonce_b);
+    auto r_b = scanner->handle_frame(frame_b);
+    EXPECT_TRUE(r_b.is_ok());
+    EXPECT_TRUE(r_b.value());
+    // 此时 seen_nonces_ 应只剩 nonce_B（nonce_A 已被清理）
+    EXPECT_EQ(scanner->seen_count(), 1u);
+}
+
+// 后台线程启动 + 短时 poll 后停止：验证 thread body（while running.load()）被实际进入，
+// poll_once 被调用（recv 超时返回 NET_TIMEOUT，被 catch 并 continue）
+// 覆盖 scanner.cpp:36-44, 54-63
+TEST(UdafScanner, RunLoopPollsAndStopsCleanly) {
+    ServiceRegistry reg;
+    auto scanner = Scanner::create(&reg, ScannerConfig{});
+    ASSERT_NE(scanner, nullptr);
+    EXPECT_TRUE(scanner->start().is_ok());
+    EXPECT_TRUE(scanner->running());
+    // 留 350ms 让 thread 跑 3 次 poll_once（每次 recv(100) timeout）
+    std::this_thread::sleep_for(std::chrono::milliseconds(350));
+    auto t0 = std::chrono::steady_clock::now();
+    scanner->stop();
+    auto us = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+    EXPECT_LT(us, 2000) << "stop took " << us << "ms";
+    EXPECT_FALSE(scanner->running());
+}
+
+// 重复 start 第二次返回 RESOURCE_BUSY
+TEST(UdafScanner, StartTwiceReturnsBusy) {
+    ServiceRegistry reg;
+    auto scanner = Scanner::create(&reg, ScannerConfig{});
+    ASSERT_NE(scanner, nullptr);
+    EXPECT_TRUE(scanner->start().is_ok());
+    auto r = scanner->start();
+    EXPECT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::RESOURCE_BUSY);
+    scanner->stop();
+}
+
+// 真 UDP 套接字回环：向 scanner 绑定的端口发送合法帧，验证 poll_once
+// 内部 recv() 成功 → 调用 handle_frame → 注册节点（覆盖 scanner.cpp:62）
+TEST(UdafScanner, PollOnceReceivesFrameFromLoopback) {
+    ServiceRegistry reg;
+    constexpr std::uint16_t kScannerPort = 19902;
+    ScannerConfig cfg;
+    cfg.bind_port = kScannerPort;
+    auto scanner = Scanner::create(&reg, cfg);
+    ASSERT_NE(scanner, nullptr);
+    ASSERT_TRUE(scanner->start().is_ok());
+
+    // 等后台线程进入 recv()
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    // 构造发送端 UDP 套接字并 sendto 到 scanner 端口
+    int tx_fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+    ASSERT_GE(tx_fd, 0);
+    sockaddr_in dst{};
+    dst.sin_family = AF_INET;
+    dst.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    dst.sin_port = htons(kScannerPort);
+
+    auto frame = make_valid_frame("loopback-node");
+    ssize_t sent = ::sendto(tx_fd, frame.data(), frame.size(), 0,
+                            reinterpret_cast<sockaddr*>(&dst), sizeof(dst));
+    EXPECT_EQ(sent, static_cast<ssize_t>(frame.size()));
+    ::close(tx_fd);
+
+    // 等待 scanner 接收 + 处理
+    bool registered = false;
+    for (int i = 0; i < 50; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        auto entry = reg.get_node("loopback-node");
+        if (entry.is_ok()) { registered = true; break; }
+    }
+    EXPECT_TRUE(registered) << "Scanner never registered loopback-node";
+
+    scanner->stop();
+}
