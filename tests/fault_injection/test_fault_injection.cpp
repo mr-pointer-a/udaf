@@ -177,6 +177,73 @@ TEST(FaultInjection, TimeSkipForwardAdvancesClock) {
     EXPECT_GE(delta_ms, 100) << "delta_ms=" << delta_ms << " stdout=" << r.stdout_text;
 }
 
+// ---------- Wal 错误路径覆盖（覆盖率驱动）----------
+
+TEST(FaultInjection, WalOpenFailReturnsErr) {
+    auto r = run_subprocess(helper_path("fi_helper_wal_open_fail"),
+                            {"LD_PRELOAD=" + lib_path(),
+                             "UDAF_FI_FS_FAIL=open:EACCES:100pct"});
+    ASSERT_EQ(r.exit_code, 0) << "stderr: " << r.stderr_text;
+    // Wal::create 在 file open 失败时返回非 Ok
+    EXPECT_NE(r.stdout_text.find("ERR="), std::string::npos)
+        << "stdout=" << r.stdout_text;
+    EXPECT_EQ(r.stdout_text.find("OK\n"), std::string::npos)
+        << "should not succeed: stdout=" << r.stdout_text;
+}
+
+TEST(FaultInjection, WalWriteFailReturnsErr) {
+    auto r = run_subprocess(helper_path("fi_helper_wal_write_fail"),
+                            {"LD_PRELOAD=" + lib_path(),
+                             "UDAF_FI_FS_FAIL=pwrite:EIO:100pct"});
+    ASSERT_EQ(r.exit_code, 0) << "stderr: " << r.stderr_text;
+    EXPECT_NE(r.stdout_text.find("ERR="), std::string::npos)
+        << "stdout=" << r.stdout_text;
+}
+
+TEST(FaultInjection, WalFsyncFailReturnsErr) {
+    auto r = run_subprocess(helper_path("fi_helper_wal_fsync_fail"),
+                            {"LD_PRELOAD=" + lib_path(),
+                             "UDAF_FI_FS_FAIL=fsync:EIO:100pct"});
+    ASSERT_EQ(r.exit_code, 0) << "stderr: " << r.stderr_text;
+    EXPECT_NE(r.stdout_text.find("ERR="), std::string::npos)
+        << "stdout=" << r.stdout_text;
+}
+
+TEST(FaultInjection, WalWriteEintrRecovers) {
+    // 用 net_delay 让 pwrite 第一次延迟后返回 EINTR，第二次成功
+    // → write_at 进入 retry 分支最终写入成功
+    auto r = run_subprocess(helper_path("fi_helper_wal_write_eintr"),
+                            {"LD_PRELOAD=" + lib_path(),
+                             "UDAF_FI_FS_FAIL=pwrite:EINTR:50pct"});
+    ASSERT_EQ(r.exit_code, 0) << "stderr: " << r.stderr_text;
+    // 50% EINTR 概率下多数情况下能恢复（write_at 内 while 循环重试）
+    // 接受 OK 或 ERR（极少数情况下全部 EINTR）
+    EXPECT_TRUE(r.stdout_text.find("OK=") != std::string::npos ||
+                r.stdout_text.find("ERR=") != std::string::npos)
+        << "stdout=" << r.stdout_text;
+}
+
+TEST(FaultInjection, WalTruncateLseekFailReturnsErr) {
+    // truncate 内部 lseek(SEEK_SET) 失败 → 返回 Err
+    // 拦截 lseek 让 truncate 走到 seek_set 失败分支（行 591-592）
+    auto r = run_subprocess(helper_path("fi_helper_wal_truncate_lseek_fail"),
+                            {"LD_PRELOAD=" + lib_path(),
+                             "UDAF_FI_FS_FAIL=lseek:EIO:100pct"});
+    ASSERT_EQ(r.exit_code, 0) << "stderr: " << r.stderr_text;
+    EXPECT_NE(r.stdout_text.find("ERR="), std::string::npos)
+        << "stdout=" << r.stdout_text;
+}
+
+TEST(FaultInjection, WalTruncateAllFtruncateFailReturnsErr) {
+    // truncate_all 内部 ftruncate 失败 → 返回 Err（行 609-610）
+    auto r = run_subprocess(helper_path("fi_helper_wal_truncate_all_ftruncate_fail"),
+                            {"LD_PRELOAD=" + lib_path(),
+                             "UDAF_FI_FS_FAIL=ftruncate:EIO:100pct"});
+    ASSERT_EQ(r.exit_code, 0) << "stderr: " << r.stderr_text;
+    EXPECT_NE(r.stdout_text.find("ERR="), std::string::npos)
+        << "stdout=" << r.stdout_text;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {

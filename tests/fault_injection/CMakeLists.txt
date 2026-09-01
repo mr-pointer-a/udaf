@@ -46,6 +46,17 @@ foreach(helper fi_helper_socket fi_helper_socket_repeat fi_helper_connect_delay 
     )
 endforeach()
 
+# Wal 错误路径 helper（独立源，需链接 udaf_platform_fs + udaf_core）
+foreach(helper fi_helper_wal_open_fail fi_helper_wal_write_fail fi_helper_wal_fsync_fail fi_helper_wal_write_eintr fi_helper_wal_truncate_lseek_fail fi_helper_wal_truncate_all_ftruncate_fail)
+    add_executable(${helper} fi_helpers_wal.cpp)
+    target_compile_options(${helper} PRIVATE -Wall -Wextra -Wpedantic)
+    target_link_libraries(${helper} PRIVATE udaf_platform_fs udaf_core)
+    set_target_properties(${helper} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests/fault_injection"
+        OUTPUT_NAME "${helper}"
+    )
+endforeach()
+
 add_test(NAME test_fault_injection COMMAND test_fault_injection)
 set_tests_properties(test_fault_injection PROPERTIES
     LABELS "fault_injection"

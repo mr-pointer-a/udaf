@@ -361,8 +361,35 @@ typedef int (*open_fn_t)(const char*, int, ...);
 typedef int (*close_fn_t)(int);
 typedef ssize_t (*read_fn_t)(int, void*, size_t);
 typedef ssize_t (*write_fn_t)(int, const void*, size_t);
+typedef ssize_t (*pread_fn_t)(int, void*, size_t, off_t);
+typedef ssize_t (*pwrite_fn_t)(int, const void*, size_t, off_t);
 typedef int (*fsync_fn_t)(int);
 typedef int (*unlink_fn_t)(const char*);
+typedef off_t (*lseek_fn_t)(int, off_t, int);
+typedef int (*ftruncate_fn_t)(int, off_t);
+
+/// 判定 pathname 是否属于测试框架/运行时基础设施（不应被注入）
+/// 命中模式：覆盖率数据 (.gcda)、覆盖率静态 (.gcno)、动态链接器路径、
+/// 共享库 (.so)、本框架的临时文件等。
+static int is_infra_path(const char* pathname) {
+    if (!pathname) return 0;
+    const char* dot = strrchr(pathname, '.');
+    if (dot) {
+        if (strcmp(dot, ".gcda") == 0) return 1;
+        if (strcmp(dot, ".gcno") == 0) return 1;
+    }
+    /* ld.so / libc / libpthread 路径 */
+    if (strstr(pathname, "/ld-linux")) return 1;
+    if (strstr(pathname, "/ld.so")) return 1;
+    if (strstr(pathname, "/libc.so")) return 1;
+    if (strstr(pathname, "/libpthread")) return 1;
+    if (strstr(pathname, "/libstdc++")) return 1;
+    if (strstr(pathname, "/libgcc_s")) return 1;
+    if (strstr(pathname, "/libm.so")) return 1;
+    /* GCC libgcov 临时与 lock 文件 */
+    if (strstr(pathname, "/tmp/gcov-")) return 1;
+    return 0;
+}
 
 int open(const char* pathname, int flags, ...) {
     static open_fn_t real = NULL;
@@ -374,6 +401,8 @@ int open(const char* pathname, int flags, ...) {
         mode = (mode_t)va_arg(ap, int);
         va_end(ap);
     }
+    /* 基础设施路径放行（gcov 写覆盖率数据、运行时加载共享库） */
+    if (is_infra_path(pathname)) return real(pathname, flags, mode);
     if (apply_fail(g_fs_fail, g_fs_fail_n, "open")) return -1;
     return real(pathname, flags, mode);
 }
@@ -399,6 +428,20 @@ ssize_t write(int fd, const void* buf, size_t count) {
     return real(fd, buf, count);
 }
 
+ssize_t pread(int fd, void* buf, size_t count, off_t offset) {
+    static pread_fn_t real = NULL;
+    if (!real) real = (pread_fn_t)dlsym(RTLD_NEXT, "pread");
+    if (apply_fail(g_fs_fail, g_fs_fail_n, "pread")) return -1;
+    return real(fd, buf, count, offset);
+}
+
+ssize_t pwrite(int fd, const void* buf, size_t count, off_t offset) {
+    static pwrite_fn_t real = NULL;
+    if (!real) real = (pwrite_fn_t)dlsym(RTLD_NEXT, "pwrite");
+    if (apply_fail(g_fs_fail, g_fs_fail_n, "pwrite")) return -1;
+    return real(fd, buf, count, offset);
+}
+
 int fsync(int fd) {
     static fsync_fn_t real = NULL;
     if (!real) real = (fsync_fn_t)dlsym(RTLD_NEXT, "fsync");
@@ -411,6 +454,20 @@ int unlink(const char* pathname) {
     if (!real) real = (unlink_fn_t)dlsym(RTLD_NEXT, "unlink");
     if (apply_fail(g_fs_fail, g_fs_fail_n, "unlink")) return -1;
     return real(pathname);
+}
+
+off_t lseek(int fd, off_t offset, int whence) {
+    static lseek_fn_t real = NULL;
+    if (!real) real = (lseek_fn_t)dlsym(RTLD_NEXT, "lseek");
+    if (apply_fail(g_fs_fail, g_fs_fail_n, "lseek")) return (off_t)-1;
+    return real(fd, offset, whence);
+}
+
+int ftruncate(int fd, off_t length) {
+    static ftruncate_fn_t real = NULL;
+    if (!real) real = (ftruncate_fn_t)dlsym(RTLD_NEXT, "ftruncate");
+    if (apply_fail(g_fs_fail, g_fs_fail_n, "ftruncate")) return -1;
+    return real(fd, length);
 }
 
 // ===========================================================================
