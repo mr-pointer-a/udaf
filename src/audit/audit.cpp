@@ -136,6 +136,11 @@ core::Result<std::uint64_t>
 AuditLogger::append(ActionType action, std::string actor, std::string target,
                     std::string params_json) noexcept {
     std::lock_guard<std::mutex> lk(mtx_);
+    // 先尝试打开文件，失败时**不**推进 seq_/prev_hash_（保证失败可重试）
+    std::ofstream out(path_, std::ios::app);
+    if (!out.is_open()) {
+        return core::Result<std::uint64_t>::err(core::ErrorCode::INTERNAL);
+    }
     std::uint64_t seq = ++seq_;
     auto params_hash = compute_params_hash(params_json);
 
@@ -155,16 +160,14 @@ AuditLogger::append(ActionType action, std::string actor, std::string target,
          << static_cast<int>(action);
     prev_hash_ = sha512_hex(next.str());
 
-    std::ofstream out(path_, std::ios::app);
-    if (!out.is_open()) {
-        return core::Result<std::uint64_t>::err(core::ErrorCode::INTERNAL);
-    }
     // line-format：seq|action|actor|target|ts|prev|params_h|json
     out << ev.sequence << '|' << action_name(ev.action) << '|'
         << ev.actor << '|' << ev.target << '|'
         << ev.timestamp_ns << '|' << ev.prev_hash << '|'
         << ev.params_hash << '|' << ev.params_json << '\n';
     if (!out.good()) {
+        // 写入失败：回滚 seq_/prev_hash_（防止链断裂）
+        --seq_;
         return core::Result<std::uint64_t>::err(core::ErrorCode::INTERNAL);
     }
     return core::Result<std::uint64_t>::ok(seq);

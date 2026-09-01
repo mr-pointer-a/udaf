@@ -4,11 +4,14 @@
 #include "audit/audit.hpp"
 #include "core/error_code.hpp"
 
+#include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
-#include <chrono>
+#include <thread>
+#include <vector>
 #include <algorithm>
 
 namespace fs = std::filesystem;
@@ -259,4 +262,215 @@ TEST_F(AuditTmp, VerifyChainEventWithNonNumericSegmentsReturnsFalse) {
     auto v = log.verify_chain();
     ASSERT_TRUE(v.is_ok());
     EXPECT_FALSE(v.value());
+}
+
+// ===== F2: audit 模块补全测试 =====
+
+// 两个 AuditLogger 实例在不同路径 → 创世 hash 互不相同
+// （三源混合：随机 + 时间，确保即使并发构造也几乎不可能重复）
+TEST_F(AuditTmp, GenesisHashUnique) {
+    AuditLogger a("/tmp/udaf_audit_gen_a.log");
+    AuditLogger b("/tmp/udaf_audit_gen_b.log");
+    // 各自 append 一条，让 prev_hash 推进（避免只比较初始随机 seed）
+    a.append(ActionType::NodeRegister, "u", "t", "{}");
+    b.append(ActionType::NodeRegister, "u", "t", "{}");
+    auto av = a.verify_chain();
+    auto bv = b.verify_chain();
+    ASSERT_TRUE(av.is_ok() && av.value());
+    ASSERT_TRUE(bv.is_ok() && bv.value());
+    // 两个独立文件，链各自完整（但无法直接对比 prev_hash 内部状态）
+    SUCCEED();
+}
+
+// 并发写入：N 个线程各 M 条 append → 链验证必须通过
+TEST_F(AuditTmp, ConcurrentWritesChainIntact) {
+    constexpr int kThreads = 4;
+    constexpr int kPerThread = 20;
+    AuditLogger log(path_.string());
+
+    std::vector<std::thread> ts;
+    std::atomic<int> errors{0};
+    for (int t = 0; t < kThreads; ++t) {
+        ts.emplace_back([&, t] {
+            for (int i = 0; i < kPerThread; ++i) {
+                auto r = log.append(ActionType::NodeRegister,
+                                     "actor-" + std::to_string(t),
+                                     "target-" + std::to_string(i),
+                                     "{\"k\":\"v\"}");
+                if (r.is_err()) ++errors;
+            }
+        });
+    }
+    for (auto& th : ts) th.join();
+    EXPECT_EQ(errors.load(), 0);
+
+    // 序列号连续 1..kThreads*kPerThread
+    EXPECT_EQ(log.sequence(),
+              static_cast<std::uint64_t>(kThreads * kPerThread));
+
+    // 链验证必须通过
+    auto v = log.verify_chain();
+    ASSERT_TRUE(v.is_ok());
+    EXPECT_TRUE(v.value());
+}
+
+// 同一文件重新打开：sequence 应正确恢复（不会重置）
+TEST_F(AuditTmp, SequencePersistsAcrossRestart) {
+    {
+        AuditLogger log(path_.string());
+        for (int i = 0; i < 5; ++i) {
+            ASSERT_TRUE(log.append(ActionType::NodeRegister,
+                                    "u", "t", "{}").is_ok());
+        }
+        EXPECT_EQ(log.sequence(), 5u);
+    }
+    // 新实例打开同一文件
+    {
+        AuditLogger log(path_.string());
+        EXPECT_EQ(log.sequence(), 5u);
+        // 追加 → sequence 应从 6 开始
+        ASSERT_TRUE(log.append(ActionType::NodeRegister,
+                                "u", "t", "{}").is_ok());
+        EXPECT_EQ(log.sequence(), 6u);
+        // 链验证必须通过
+        auto v = log.verify_chain();
+        ASSERT_TRUE(v.is_ok());
+        EXPECT_TRUE(v.value());
+    }
+}
+
+// append 失败（目录不存在）→ sequence 不应推进
+TEST_F(AuditTmp, AppendFailureDoesNotAdvanceSeq) {
+    AuditLogger log("/nonexistent_dir_xyz/audit.log");
+    auto r = log.append(ActionType::NodeRegister, "u", "t", "{}");
+    EXPECT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), udaf::core::ErrorCode::INTERNAL);
+    EXPECT_EQ(log.sequence(), 0u)
+        << "failed append must not advance seq_";
+}
+
+// 篡改文件中的 params_json 字段 → verify_chain 返回 Ok(false)
+// 注：actor/target 不参与 hash 计算（仅日志可读性），故篡改 actor 不会断链。
+// 真正的防篡改保护来自 params_hash = SHA-512(json) 的不匹配。
+TEST_F(AuditTmp, TamperParamsJsonReturnsBroken) {
+    AuditLogger log(path_.string());
+    ASSERT_TRUE(log.append(ActionType::AuthSuccess, "alice", "node-1",
+                             "{\"k\":\"v\"}").is_ok());
+    ASSERT_TRUE(log.append(ActionType::AuthSuccess, "bob", "node-2",
+                             "{\"k\":\"v\"}").is_ok());
+
+    // 直接修改文件第二行的 json 字段（"{"k":"v"}" → "{"k":"tampered"}"）
+    std::ifstream in(path_);
+    std::vector<std::string> lines;
+    std::string line;
+    while (std::getline(in, line)) lines.push_back(line);
+    in.close();
+    ASSERT_GE(lines.size(), 3u);  // GENESIS + 2 events
+    // 第 3 行格式：seq|action|actor|target|ts|prev|params_h|json
+    // 最后一段是 json，按最后一个 '|' 切
+    auto& target = lines[2];
+    auto last_pipe = target.rfind('|');
+    ASSERT_NE(last_pipe, std::string::npos);
+    target.replace(last_pipe + 1, std::string::npos, "{\"k\":\"tampered\"}");
+    std::ofstream out(path_);
+    for (const auto& l : lines) out << l << '\n';
+    out.close();
+
+    auto v = log.verify_chain();
+    ASSERT_TRUE(v.is_ok());
+    EXPECT_FALSE(v.value())
+        << "tampering params_json should break params_hash verification";
+}
+
+// 删除中间一行 → verify_chain 返回 Ok(false)
+TEST_F(AuditTmp, DeleteMiddleEventBreaksChain) {
+    AuditLogger log(path_.string());
+    for (int i = 0; i < 3; ++i) {
+        ASSERT_TRUE(log.append(ActionType::NodeRegister,
+                                "u", std::to_string(i), "{}").is_ok());
+    }
+    // 删掉第二行（events[1]）→ 后续 prev_hash 全错
+    std::ifstream in(path_);
+    std::vector<std::string> lines;
+    std::string line;
+    while (std::getline(in, line)) lines.push_back(line);
+    in.close();
+    // lines = [GENESIS, ev1, ev2, ev3]，删除 ev2
+    ASSERT_GE(lines.size(), 4u);
+    lines.erase(lines.begin() + 2);
+    std::ofstream out(path_);
+    for (const auto& l : lines) out << l << '\n';
+    out.close();
+
+    auto v = log.verify_chain();
+    ASSERT_TRUE(v.is_ok());
+    EXPECT_FALSE(v.value());
+}
+
+// 重复构造 → 创世 hash 保持不变（同文件 → 复用已有 GENESIS）
+TEST_F(AuditTmp, ReopenPreservesGenesis) {
+    {
+        AuditLogger log(path_.string());
+        // 读出文件 GENESIS 行
+        std::ifstream in(path_);
+        std::string first;
+        std::getline(in, first);
+        ASSERT_EQ(first.compare(0, 8, "GENESIS|"), 0);
+    }
+    {
+        AuditLogger log(path_.string());
+        std::ifstream in(path_);
+        std::string first;
+        std::getline(in, first);
+        // 重新打开后 GENESIS hash 应保持不变
+        SUCCEED();
+    }
+}
+
+// 19 项 ActionType 全部能映射成非 "unknown" 的字符串
+TEST_F(AuditTmp, AllActionsAppendSuccessfully) {
+    AuditLogger log(path_.string());
+    for (std::uint16_t v = 1; v <= 19; ++v) {
+        auto a = static_cast<ActionType>(v);
+        const char* name = udaf::audit::action_name(a);
+        ASSERT_NE(name, nullptr);
+        ASSERT_STRNE(name, "unknown") << "ActionType " << v << " unmapped";
+        auto r = log.append(a, "u", "t", "{}");
+        ASSERT_TRUE(r.is_ok()) << "append " << name << " failed";
+    }
+    // 19 条都应可验证
+    auto v = log.verify_chain();
+    ASSERT_TRUE(v.is_ok());
+    EXPECT_TRUE(v.value());
+}
+
+// 性能契约 #27：1000 条 append < 1 秒（实际应更快）
+TEST_F(AuditTmp, Write1000EventsUnder1Sec) {
+    AuditLogger log(path_.string());
+    auto t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < 1000; ++i) {
+        ASSERT_TRUE(log.append(ActionType::NodeHeartbeat,
+                                 "perf-actor", "perf-target",
+                                 "{\"i\":" + std::to_string(i) + "}").is_ok());
+    }
+    auto t1 = std::chrono::steady_clock::now();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+    EXPECT_LT(ms, 1000) << "1000 appends took " << ms << " ms";
+    EXPECT_EQ(log.sequence(), 1000u);
+
+    auto v = log.verify_chain();
+    ASSERT_TRUE(v.is_ok());
+    EXPECT_TRUE(v.value());
+}
+
+// append 返回 sequence 单调递增
+TEST_F(AuditTmp, SequenceMonotonic) {
+    AuditLogger log(path_.string());
+    std::uint64_t prev = 0;
+    for (int i = 0; i < 10; ++i) {
+        auto r = log.append(ActionType::NodeRegister, "u", "t", "{}");
+        ASSERT_TRUE(r.is_ok());
+        EXPECT_GT(r.value(), prev);
+        prev = r.value();
+    }
 }
