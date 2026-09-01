@@ -1,27 +1,31 @@
 # CompilerWarnings.cmake - 统一编译警告选项
 # 依据 CLAUDE.md §"编译"：打开所有警告选项，新增代码不允许引入编译警告
 
-# 默认开启的警告（GCC + Clang 通用）
-set(UDAF_COMPILER_WARNINGS
+# C 通用警告（C/C++ 都生效）
+set(UDAF_C_WARNINGS
     -Wall
     -Wextra
     -Wpedantic
     -Wshadow
-    -Wconversion
-    -Wsign-conversion
-    -Wnon-virtual-dtor
-    -Wold-style-cast
     -Wcast-align
     -Wunused
-    -Woverloaded-virtual
     -Wnull-dereference
-    -Wdouble-promotion
     -Wformat=2
 )
 
-# GCC 专属
+# C++ 专属警告（仅 CXX target 生效）
+set(UDAF_CXX_WARNINGS
+    -Wnon-virtual-dtor
+    -Wold-style-cast
+    -Woverloaded-virtual
+    -Wdouble-promotion
+    -Wconversion
+    -Wsign-conversion
+)
+
+# GCC 专属（C++）
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    list(APPEND UDAF_COMPILER_WARNINGS
+    list(APPEND UDAF_CXX_WARNINGS
         -Wduplicated-cond
         -Wduplicated-branches
         -Wlogical-op
@@ -32,7 +36,7 @@ endif()
 
 # Clang 专属
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    list(APPEND UDAF_COMPILER_WARNINGS
+    list(APPEND UDAF_CXX_WARNINGS
         -Wrange-loop-construct
         -Wgnu-zero-variadic-macro-arguments
         -Wc++20-compat

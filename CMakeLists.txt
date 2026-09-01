@@ -81,7 +81,12 @@ include(PackageDeb)
 
 # ---------- 编译警告 + 静态分析 ----------
 
-add_compile_options(${UDAF_COMPILER_WARNINGS})
+# 使用生成器表达式按语言分桶：C 与 CXX 警告各自只对对应语言生效，
+# 避免 CXX-only 警告（如 -Wnon-virtual-dtor / -Wold-style-cast）泄漏给 .c 文件
+add_compile_options(
+    ${UDAF_C_WARNINGS}
+    "$<$<COMPILE_LANGUAGE:CXX>:${UDAF_CXX_WARNINGS}>"
+)
 if(UDAF_ENABLE_COVERAGE)
     add_compile_options(${UDAF_COVERAGE_FLAGS})
     add_link_options(${UDAF_COVERAGE_LINK_FLAGS})

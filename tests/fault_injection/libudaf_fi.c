@@ -4,8 +4,7 @@
 //
 // 用法：
 //   cc -shared -fPIC -o libudaf_fi.so libudaf_fi.c -ldl -lpthread
-//   LD_PRELOAD=./libudaf_fi.so UDAF_FI_NET_FAIL="connect:ECONNREFUSED:50pct" \
-//       ./my_under_test_binary
+//   LD_PRELOAD=./libudaf_fi.so UDAF_FI_NET_FAIL='connect:ECONNREFUSED:50pct' ./binary
 //
 // 约束：
 //   - 仅实现 Linux 平台（依赖 <sys/socket.h> / <dlfcn.h> / dlsym）。
@@ -120,7 +119,7 @@ static void log_event(const char* fmt, ...) {
 /// 应用失败规则：若命中规则则设置 errno 并返回 -1。
 /// @param syscall 调用名称（用于匹配）
 /// @return 1 = 命中（已设置 errno，调用方应返回 -1）；0 = 未命中
-static int apply_fail(const fail_rule_t* rules, size_t n, const char* syscall) {
+static int apply_fail(fail_rule_t* rules, size_t n, const char* syscall) {
     for (size_t i = 0; i < n; ++i) {
         if (strcmp(rules[i].name, syscall) != 0) continue;
         int prev = atomic_fetch_add(&rules[i].count, 1);
@@ -487,7 +486,8 @@ int clock_gettime(clockid_t clk_id, struct timespec* tp) {
     static int (*real)(clockid_t, struct timespec*) = NULL;
     if (!real) real = (int (*)(clockid_t, struct timespec*))dlsym(RTLD_NEXT, "clock_gettime");
     int r = real(clk_id, tp);
-    if (r == 0 && tp != NULL) {
+    // clock_gettime(2): tp 必须非 NULL（POSIX 规定），省略冗余判空
+    if (r == 0) {
         int64_t skip = atomic_load(&g_time_skip_ns);
         if (skip != 0) {
             tp->tv_sec += skip / 1000000000LL;

@@ -19,7 +19,12 @@
 #   - 时钟偏移：心跳超时 / TLS 会话过期 / scheduler 唤醒
 
 add_library(udaf_fi SHARED libudaf_fi.c)
-target_compile_options(udaf_fi PRIVATE -Wall -Wextra -Wpedantic -Wno-unused-parameter)
+# 全局 C/CXX 警告已在顶层 CMakeLists.txt 用 COMPILE_LANGUAGE 生成器表达式分流，
+# 此处只补充 udaf_fi target 的额外 C 警告（去掉一些因 LD_PRELOAD 实现不可避免的 pedantic 警告）
+target_compile_options(udaf_fi PRIVATE
+    -Wno-unused-parameter
+    -Wno-pedantic         # dlsym 的对象→函数指针转换是 POSIX/GNU 扩展，不可避免
+)
 target_link_libraries(udaf_fi PRIVATE dl)
 target_include_directories(udaf_fi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # 关键：libudaf_fi.so 不编译/链接 ASAN。它通过 LD_PRELOAD 加载到被测进程中，
