@@ -17,9 +17,12 @@
 #include "ability_b/serialization/serializer.hpp"
 #include "core/error_code.hpp"
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <span>
+#include <thread>
 #include <typeindex>
 #include <type_traits>
 #include <vector>
@@ -346,6 +349,38 @@ TEST(UdafChannel, CloseClosedRecv) {
     MessageFrame r;
     // 已关闭的 channel 在阻塞 recv 时应返回 Closed
     EXPECT_EQ(chan->recv_base(r, -1), RecvStatus::Closed);
+}
+
+// ===== F17 新增覆盖 =====
+
+// 覆盖 inproc_channel.cpp:54-55 cv_.wait 阻塞路径
+// 覆盖 inproc_channel.cpp:60-62 唤醒后 closed && queues 全空 → Closed
+// 构造：先消费完队列消息，确保空 → 启动线程 recv_base(r, -1) 阻塞在 cv_.wait
+// → 主线程 close() → notify_all → 阻塞线程谓词 closed_==true 触发 → 走 L60 检查
+TEST(UdafChannel, RecvBlockingClosedUnblocksWithClosedStatus) {
+    auto chan = std::make_unique<InprocChannel>();
+
+    // 预先 send 一条消息再 recv 消费，确保初始队列空（否则 pick() 直接返回，
+    // 不会进入 cv_.wait）
+    MessageFrame init;
+    init.payload = {0x01};
+    ASSERT_EQ(chan->send_base(std::move(init)), SendResult::Ok);
+    MessageFrame consume;
+    ASSERT_EQ(chan->recv_base(consume, 100), RecvStatus::Ok);
+
+    // 启动后台线程阻塞在 recv_base(r, -1)
+    std::atomic<RecvStatus> recv_status{RecvStatus::Timeout};
+    std::thread waiter([&] {
+        MessageFrame r;
+        recv_status.store(chan->recv_base(r, -1));
+    });
+
+    // 主线程 sleep 一小段时间，确保 waiter 已进入 cv_.wait
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    chan->close();  // 触发 notify_all + closed_=true
+    waiter.join();
+
+    EXPECT_EQ(recv_status.load(), RecvStatus::Closed);
 }
 
 TEST(UdafChannel, ChannelTemplateWraps) {
