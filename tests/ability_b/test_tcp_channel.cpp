@@ -335,6 +335,143 @@ TEST(TcpChannel, TruncatedFrameReturnsError) {
     chan.close();
 }
 
+// ============================================================
+// F9 新增覆盖：tcp_channel.cpp 未覆盖分支
+// ============================================================
+
+// 关闭后再次 connect 必须返回 false + INVALID_ARG
+// 覆盖 tcp_channel.cpp:163-166
+TEST(TcpChannel, ConnectAfterCloseReturnsInvalidArg) {
+    TcpChannelConfig cfg;
+    cfg.connect_uri = "tcp://127.0.0.1:1";
+    cfg.io_timeout = std::chrono::milliseconds(100);
+    TcpChannel chan(cfg, /*auto_connect=*/false);
+
+    chan.close();
+    EXPECT_FALSE(chan.connect());
+    EXPECT_EQ(chan.last_error(), udaf::core::ErrorCode::INVALID_ARG);
+}
+
+// 真 ZMQ 资源清理：依赖析构函数自动 close()（不显式调用 chan.close()）
+// 覆盖 tcp_channel.cpp:143-145 + Impl::Impl 析构
+TEST(TcpChannel, DestructorWithoutExplicitCloseIsSafe) {
+    ZmqRouterFixture srv;
+    ASSERT_TRUE(srv.ready());
+
+    TcpChannelConfig cfg;
+    cfg.connect_uri = srv.endpoint();
+    cfg.io_timeout = std::chrono::milliseconds(500);
+    {
+        TcpChannel chan(cfg);
+        EXPECT_TRUE(chan.is_connected());
+        // 不调用 chan.close()，依赖析构函数清理 socket + context
+    }  // chan 离开作用域 → ~TcpChannel() → close() → Impl::~Impl() 关闭 socket
+    SUCCEED();
+}
+
+// 服务端接受连接后立即关闭 → ZMQ DEALER 会将后续消息排队（即使对端断开）
+// 因此本测试主要验证 close/destruct 顺序不导致崩溃，不强断言 send 结果
+TEST(TcpChannel, SendAfterServerCloseIsSafe) {
+    ZmqRouterFixture srv;
+    ASSERT_TRUE(srv.ready());
+
+    TcpChannelConfig cfg;
+    cfg.connect_uri = srv.endpoint();
+    cfg.io_timeout = std::chrono::milliseconds(1000);
+    cfg.send_hwm = 1;
+    TcpChannel chan(cfg);
+
+    std::thread srv_thread([&] {
+        auto raw = srv.recv_raw(2000);
+        (void)raw;
+        // srv_thread 退出后 ZmqRouterFixture 析构 → zmq_close 服务端
+    });
+
+    MessageFrame first;
+    first.payload.assign({'h'});
+    (void)chan.send_base(std::move(first));
+
+    srv_thread.join();
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    // 此时服务端 socket 已 close，客户端 send 结果依赖 ZMQ 内部时序：
+    // - 可能 Ok（消息入本地队列）
+    // - 可能 Full（HWM=1 已满）
+    // - 可能 Error（ECONNREFUSED 被检测到）
+    // 三者均视为合法接受行为，本测试仅断言不崩溃
+    MessageFrame second;
+    second.payload.assign({'x'});
+    second.priority = MessagePriority::Data;
+    auto sr = chan.send_base(std::move(second));
+    EXPECT_TRUE(sr == SendResult::Ok || sr == SendResult::Full || sr == SendResult::Error)
+        << "unexpected SendResult: " << static_cast<int>(sr);
+    chan.close();
+}
+
+// 向不可达地址 recv → ZMQ 异步建连失败 → 返回 Error
+// 覆盖 tcp_channel.cpp:256-261
+TEST(TcpChannel, RecvFromUnreachableHostReturnsError) {
+    TcpChannelConfig cfg;
+    cfg.connect_uri = "tcp://127.0.0.1:1";
+    cfg.io_timeout = std::chrono::milliseconds(2000);
+    TcpChannel chan(cfg);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    MessageFrame m;
+    auto rs = chan.recv_base(m, 1000);
+    if (rs == RecvStatus::Error) {
+        auto err = chan.last_error();
+        EXPECT_TRUE(err == udaf::core::ErrorCode::NET_CONNECTION_REFUSED ||
+                    err == udaf::core::ErrorCode::INTERNAL ||
+                    err == udaf::core::ErrorCode::NET_TIMEOUT)
+            << "unexpected error: 0x" << std::hex << static_cast<int>(err);
+    } else {
+        EXPECT_EQ(rs, RecvStatus::Timeout);
+    }
+    chan.close();
+}
+
+// plen > available payload 长度 → decode_frame 返回 false → RecvStatus::Error
+// 覆盖 tcp_channel.cpp:94 plen 溢出检查
+TEST(TcpChannel, PlenOverflowReturnsError) {
+    ZmqRouterFixture srv;
+    ASSERT_TRUE(srv.ready());
+
+    TcpChannelConfig cfg;
+    cfg.connect_uri = srv.endpoint();
+    cfg.io_timeout = std::chrono::milliseconds(2000);
+    TcpChannel chan(cfg);
+
+    std::thread srv_thread([&] {
+        (void)srv.recv_raw(2000);  // 接收客户端首发获取 identity
+        // 构造非法帧：header (13B) + plen 字段写 1000，但实际 payload 仅 5B
+        std::uint8_t garbage[13 + 5] = {};
+        garbage[0] = static_cast<std::uint8_t>(MessagePriority::Data);
+        garbage[1 + 0] = 0x01;  // seq = 1
+        // plen = 1000 LE
+        garbage[9 + 0] = 0xE8;  // 1000 & 0xFF
+        garbage[9 + 1] = 0x03;  // (1000 >> 8) & 0xFF
+        garbage[9 + 2] = 0;
+        garbage[9 + 3] = 0;
+        // payload 仅 5 字节（远小于 plen=1000）
+        std::memcpy(garbage + 13, "short", 5);
+        srv.send_raw(garbage, sizeof(garbage));
+    });
+
+    MessageFrame out;
+    out.payload.assign({'a'});
+    (void)chan.send_base(std::move(out));
+
+    MessageFrame in;
+    auto rs = chan.recv_base(in, 2000);
+    EXPECT_EQ(rs, RecvStatus::Error);
+    EXPECT_EQ(chan.last_error(), udaf::core::ErrorCode::PROTOCOL_TRUNCATED_BUFFER);
+
+    srv_thread.join();
+    chan.close();
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
