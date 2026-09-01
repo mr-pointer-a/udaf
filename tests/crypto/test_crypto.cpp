@@ -27,6 +27,7 @@
 #include <vector>
 
 #include <openssl/x509.h>
+#include <fcntl.h>
 #include <openssl/pem.h>
 #include <openssl/rsa.h>
 #include <openssl/evp.h>
@@ -1291,6 +1292,65 @@ TEST(UdafCrypto, PkiHandshakeEncryptDecryptBeforeDoneFails) {
     auto fp = srv_hs->peer_fingerprint();
     ASSERT_TRUE(fp.is_err());
     EXPECT_EQ(fp.error(), udaf::core::ErrorCode::NOT_IMPLEMENTED);
+
+    ::close(fds[0]);
+    ::close(fds[1]);
+}
+
+// 验证客户端 step() 一次后，服务端没有响应时再次 step 应进入 WantsRead
+// 或 WantsWrite（覆盖 line 69-72 SSL_ERROR_WANT_READ / WANT_WRITE 分支）
+TEST(UdafCrypto, PkiHandshakeStepEntersWantsReadOrWrite) {
+    TmpDir tmp;
+    auto cert = tmp.p() / "cert.pem";
+    auto key  = tmp.p() / "key.pem";
+    ASSERT_TRUE(generate_self_signed(cert, key));
+
+    auto srv_ctx = TlsContext::create_server_pki(cert, key);
+    auto cli_ctx = TlsContext::create_client_pki(cert, cert, key);
+    ASSERT_NE(srv_ctx, nullptr);
+    ASSERT_NE(cli_ctx, nullptr);
+
+    int fds[2] = {-1, -1};
+    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0) << strerror(errno);
+
+    // 设两端 fd 都为 non-blocking：避免 SSL_accept/connect 在对端 socket 缓存满时阻塞
+    for (int fd_idx : {0, 1}) {
+        int fl = ::fcntl(fds[fd_idx], F_GETFL, 0);
+        ASSERT_GE(fl, 0);
+        ASSERT_EQ(::fcntl(fds[fd_idx], F_SETFL, fl | O_NONBLOCK), 0)
+            << strerror(errno);
+    }
+
+    auto cli_hs = PkiHandshake::create(std::move(cli_ctx), fds[1]);
+    auto srv_hs = PkiHandshake::create(std::move(srv_ctx), fds[0]);
+    ASSERT_NE(cli_hs, nullptr);
+    ASSERT_NE(srv_hs, nullptr);
+
+    // 第一次客户端 step() 产生 ClientHello，non-blocking 下可能直接返回
+    // WantsRead/WantsWrite（取决于 socket 缓存是否可写）
+    PkiHandshakeStage s = cli_hs->step();
+    EXPECT_TRUE(s == PkiHandshakeStage::WantsRead ||
+                s == PkiHandshakeStage::WantsWrite ||
+                s == PkiHandshakeStage::Init)
+        << "expected WantsRead/WantsWrite/Init after first client step, got "
+        << static_cast<int>(s);
+
+    // 服务端开始 step()，与客户端交换字节。在 partial step 中，任意一方都可能
+    // 进入 WantsRead 或 WantsWrite 中间态。运行 5 轮来触发至少一次中间态。
+    bool saw_intermediate = false;
+    for (int i = 0; i < 5 && !saw_intermediate; ++i) {
+        auto cs = cli_hs->step();
+        auto ss = srv_hs->step();
+        if (cs == PkiHandshakeStage::WantsRead ||
+            cs == PkiHandshakeStage::WantsWrite ||
+            ss == PkiHandshakeStage::WantsRead ||
+            ss == PkiHandshakeStage::WantsWrite) {
+            saw_intermediate = true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    EXPECT_TRUE(saw_intermediate)
+        << "never observed WantsRead or WantsWrite during partial handshake";
 
     ::close(fds[0]);
     ::close(fds[1]);
