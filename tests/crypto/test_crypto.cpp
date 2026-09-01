@@ -439,6 +439,20 @@ TEST(UdafCrypto, KeystoreSaveWrongLength) {
     EXPECT_EQ(saved.error(), udaf::core::ErrorCode::INVALID_ARG);
 }
 
+// 覆盖 keystore.cpp:80-82 rename 失败 → INTERNAL
+// 构造：预先创建同名 path 为目录 → rename 目录到路径失败
+TEST(UdafCrypto, KeystoreSaveRenameOverDirectoryReturnsInternal) {
+    TmpDir tmp;
+    auto p = tmp.p() / "as_dir.bin";
+    // 预先创建同名 path 为空目录
+    fs::create_directory(p);
+
+    std::vector<std::uint8_t> psk(32, 0xAB);
+    auto saved = udaf::crypto::save_psk_to_file(p, psk);
+    ASSERT_TRUE(saved.is_err());
+    EXPECT_EQ(saved.error(), udaf::core::ErrorCode::INTERNAL);
+}
+
 // ---------------- 7. AES-GCM 加密开销（性能契约 #26） ----------------
 TEST(UdafCrypto, AeadPerformance) {
     std::vector<std::uint8_t> key(32, 0xAA);
