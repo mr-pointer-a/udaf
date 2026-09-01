@@ -1,0 +1,185 @@
+// test_fault_injection.cpp - GTest 自检：通过 fork+exec + LD_PRELOAD 验证
+// 故障注入框架本身工作正确。
+//
+// 测试策略：
+//   父测试进程不加载 libudaf_fi.so；
+//   每个测试 fork 一个子进程，子进程通过 LD_PRELOAD 加载 libudaf_fi.so；
+//   子进程执行 helper_* 二进制，helper 触发对应 syscall 并把结果写到 stdout；
+//   父测试读 stdout 并断言。
+
+#include <gtest/gtest.h>
+#include <array>
+#include <cerrno>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fcntl.h>
+#include <string>
+#include <sys/socket.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <vector>
+
+extern char** environ;  // POSIX 全局环境
+
+namespace {
+
+std::string dirname_of(const std::string& p) {
+    auto pos = p.rfind('/');
+    if (pos == std::string::npos) return "";
+    return p.substr(0, pos);
+}
+
+std::string lib_path() {
+    char self[4096] = {0};
+    ssize_t len = readlink("/proc/self/exe", self, sizeof(self) - 1);
+    if (len <= 0) return "";
+    self[len] = '\0';
+    return dirname_of(self) + "/libudaf_fi.so";
+}
+
+std::string helper_path(const std::string& helper_name) {
+    char self[4096] = {0};
+    ssize_t len = readlink("/proc/self/exe", self, sizeof(self) - 1);
+    if (len <= 0) return "";
+    self[len] = '\0';
+    return dirname_of(self) + "/" + helper_name;
+}
+
+struct child_result {
+    int exit_code;
+    std::string stdout_text;
+    std::string stderr_text;
+};
+
+child_result run_subprocess(const std::string& prog,
+                            const std::vector<std::string>& extra_env) {
+    int out_pipe[2];
+    int err_pipe[2];
+    if (pipe(out_pipe) != 0 || pipe(err_pipe) != 0) {
+        return {-1, "", "pipe() failed"};
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        return {-1, "", "fork() failed"};
+    }
+    if (pid == 0) {
+        // 子进程
+        close(out_pipe[0]);
+        close(err_pipe[0]);
+        dup2(out_pipe[1], STDOUT_FILENO);
+        dup2(err_pipe[1], STDERR_FILENO);
+        close(out_pipe[1]);
+        close(err_pipe[1]);
+
+        // 构造 envp：当前 environ + 附加
+        std::vector<std::string> env_strs;
+        for (char** e = environ; *e != nullptr; ++e) {
+            env_strs.emplace_back(*e);
+        }
+        for (const auto& e : extra_env) env_strs.emplace_back(e);
+        std::vector<char*> envp;
+        for (const auto& e : env_strs) envp.push_back(const_cast<char*>(e.c_str()));
+        envp.push_back(nullptr);
+
+        std::vector<char*> argv;
+        argv.push_back(const_cast<char*>(prog.c_str()));
+        argv.push_back(nullptr);
+
+        execve(prog.c_str(), argv.data(), envp.data());
+        perror("execve failed");
+        _exit(127);
+    }
+
+    // 父进程
+    close(out_pipe[1]);
+    close(err_pipe[1]);
+
+    child_result r{};
+    char buf[1024];
+    ssize_t n;
+    while ((n = read(out_pipe[0], buf, sizeof(buf))) > 0) {
+        r.stdout_text.append(buf, static_cast<size_t>(n));
+    }
+    close(out_pipe[0]);
+    while ((n = read(err_pipe[0], buf, sizeof(buf))) > 0) {
+        r.stderr_text.append(buf, static_cast<size_t>(n));
+    }
+    close(err_pipe[0]);
+
+    int status = 0;
+    waitpid(pid, &status, 0);
+    if (WIFEXITED(status)) r.exit_code = WEXITSTATUS(status);
+    else r.exit_code = -1;
+    return r;
+}
+
+// ---- 测试用例 ----
+
+TEST(FaultInjection, NoRulesSocketSucceeds) {
+    auto r = run_subprocess(helper_path("fi_helper_socket"),
+                            {});  // 不设 LD_PRELOAD
+    ASSERT_EQ(r.exit_code, 0) << "stderr: " << r.stderr_text;
+    EXPECT_NE(r.stdout_text.find("OK"), std::string::npos)
+        << "stdout=" << r.stdout_text;
+}
+
+TEST(FaultInjection, SocketAlwaysFail) {
+    auto r = run_subprocess(helper_path("fi_helper_socket"),
+                            {"LD_PRELOAD=" + lib_path(),
+                             "UDAF_FI_NET_FAIL=socket:ECONNREFUSED:100pct"});
+    ASSERT_EQ(r.exit_code, 0) << "stderr: " << r.stderr_text;
+    EXPECT_NE(r.stdout_text.find("ERR=ECONNREFUSED"), std::string::npos)
+        << "stdout=" << r.stdout_text;
+}
+
+TEST(FaultInjection, SocketFailHalfRateReproducible) {
+    auto r = run_subprocess(helper_path("fi_helper_socket_repeat"),
+                            {"LD_PRELOAD=" + lib_path(),
+                             "UDAF_FI_NET_FAIL=socket:ECONNREFUSED:50pct",
+                             "UDAF_FI_SEED=42"});
+    ASSERT_EQ(r.exit_code, 0) << "stderr: " << r.stderr_text;
+    int ok_count = 0;
+    int err_count = 0;
+    sscanf(r.stdout_text.c_str(), "OK=%d ERR=%d", &ok_count, &err_count);
+    EXPECT_GT(ok_count, 0);
+    EXPECT_GT(err_count, 0);
+    EXPECT_EQ(ok_count + err_count, 100);
+}
+
+TEST(FaultInjection, NetDelayActuallyDelays) {
+    auto r = run_subprocess(helper_path("fi_helper_connect_delay"),
+                            {"LD_PRELOAD=" + lib_path(),
+                             "UDAF_FI_NET_DELAY_US=connect:30000:30000"});
+    ASSERT_EQ(r.exit_code, 0);
+    long ms = 0;
+    sscanf(r.stdout_text.c_str(), "ELAPSED_MS=%ld", &ms);
+    EXPECT_GE(ms, 30) << "stdout=" << r.stdout_text;
+}
+
+TEST(FaultInjection, FsFailOpenAlwaysFails) {
+    auto r = run_subprocess(helper_path("fi_helper_fs"),
+                            {"LD_PRELOAD=" + lib_path(),
+                             "UDAF_FI_FS_FAIL=open:EACCES:100pct"});
+    ASSERT_EQ(r.exit_code, 0);
+    EXPECT_NE(r.stdout_text.find("ERR=EACCES"), std::string::npos)
+        << "stdout=" << r.stdout_text;
+}
+
+TEST(FaultInjection, TimeSkipForwardAdvancesClock) {
+    auto r = run_subprocess(helper_path("fi_helper_clock_skip"),
+                            {"LD_PRELOAD=" + lib_path(),
+                             "UDAF_FI_TIME_SKIP_US=100000"});
+    ASSERT_EQ(r.exit_code, 0) << "stderr: " << r.stderr_text;
+    long delta_ms = 0;
+    sscanf(r.stdout_text.c_str(), "DELTA_MS=%ld", &delta_ms);
+    EXPECT_GE(delta_ms, 100) << "delta_ms=" << delta_ms << " stdout=" << r.stdout_text;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    ::testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();
+}

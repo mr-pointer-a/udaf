@@ -21,6 +21,7 @@ add_subdirectory(sdk)            # 阶段 E3
 add_subdirectory(sdk/test_c_api) # C 接口
 add_subdirectory(cli)            # 阶段 E4
 add_subdirectory(fuzz)           # 模糊测试
+add_subdirectory(fault_injection) # LD_PRELOAD 故障注入框架自检
 add_subdirectory(integration)     # 跨模块集成测试
 
 # ---------- ctest 配置 ----------
