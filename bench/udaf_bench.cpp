@@ -15,6 +15,7 @@
 #include "ability_b/port/port.hpp"
 #include "ability_b/transport/channel.hpp"
 #include "ability_b/transport/inproc_channel.hpp"
+#include "ability_b/transport/tcp_channel.hpp"
 #include "ability_b/topology/topology.hpp"
 #include "ability_b/node/node.hpp"
 #include "ability_c/executor/process_executor.hpp"
@@ -37,12 +38,18 @@ using udaf::ability_a::registry::RegistryEntry;
 using udaf::ability_b::transport::Channel;
 using udaf::ability_b::transport::ChannelBase;
 using udaf::ability_b::transport::InprocChannel;
+using udaf::ability_b::transport::TcpChannel;
+using udaf::ability_b::transport::TcpChannelConfig;
+using udaf::ability_b::transport::MessagePriority;
 using udaf::ability_b::port::InputPort;
 using udaf::ability_b::port::OutputPort;
 using udaf::ability_b::topology::Topology;
 using udaf::ability_b::topology::TopologyTransaction;
 using udaf::ability_b::topology::PeerNode;
 using udaf::ability_c::executor::ProcessExecutor;
+using udaf::ability_c::nodes::CmdExecNode;
+using udaf::ability_c::messages::CmdRequest;
+using udaf::ability_c::messages::CmdResult;
 using udaf::audit::AuditLogger;
 using udaf::audit::ActionType;
 using udaf::observability::Meter;
@@ -937,5 +944,367 @@ static void udaf_bench_command_roundtrip_p99(benchmark::State& state) {
     }
 }
 BENCHMARK(udaf_bench_command_roundtrip_p99);
+
+// ============================================================================
+// TcpChannel 相关性能契约（#6/#8/#9/#10/#12）
+// 契约定义见 docs/02-architecture.md §3.4 + docs/03-detailed-design.md §11.2
+// ============================================================================
+//
+// 共享测试装置：每个测试启动一个 ZMQ ROUTER 服务端监听随机 TCP 端口，
+// TcpChannel 作为 DEALER 连接。本机回路（loopback）不模拟真实跨主机延迟，
+// 仅作为 transport 层契约下限验证。
+
+#include <atomic>
+#include <cstring>
+#include <thread>
+#include <zmq.h>
+
+namespace {
+
+/// 启动一个 ZMQ ROUTER 监听 tcp://127.0.0.1:PORT，返回 endpoint 字符串。
+/// 服务端线程持续把收到的帧转发回去（echo 模式），用于 RTT 测量。
+class TcpBenchFixture {
+public:
+    TcpBenchFixture() {
+        ctx_ = zmq_ctx_new();
+        sock_ = zmq_socket(ctx_, ZMQ_ROUTER);
+        if (zmq_bind(sock_, "tcp://127.0.0.1:*") != 0) return;
+        char ep[256] = {0};
+        std::size_t len = sizeof(ep);
+        zmq_getsockopt(sock_, ZMQ_LAST_ENDPOINT, ep, &len);
+        endpoint_.assign(ep, len);
+
+        // 设置短超时，避免线程泄漏
+        int to = 200;  // 200ms
+        zmq_setsockopt(sock_, ZMQ_RCVTIMEO, &to, sizeof(to));
+
+        running_.store(true);
+        worker_ = std::thread([this] { loop(); });
+    }
+
+    ~TcpBenchFixture() {
+        running_.store(false);
+        if (worker_.joinable()) worker_.join();
+        if (sock_) {
+            zmq_close(sock_);
+            sock_ = nullptr;
+        }
+        if (ctx_) {
+            int linger = 0;
+            zmq_ctx_set(ctx_, ZMQ_LINGER, linger);
+            zmq_ctx_term(ctx_);
+        }
+    }
+
+    [[nodiscard]] const std::string& endpoint() const noexcept { return endpoint_; }
+
+private:
+    void loop() {
+        // 复用 identity 缓冲
+        std::vector<std::uint8_t> last_id;
+        while (running_.load()) {
+            zmq_msg_t identity, payload;
+            zmq_msg_init(&identity);
+            if (zmq_msg_recv(&identity, sock_, 0) < 0) {
+                zmq_msg_close(&identity);
+                continue;
+            }
+            const std::size_t id_len = zmq_msg_size(&identity);
+            last_id.resize(id_len);
+            if (id_len > 0) {
+                std::memcpy(last_id.data(), zmq_msg_data(&identity), id_len);
+            }
+            zmq_msg_close(&identity);
+
+            zmq_msg_init(&payload);
+            if (zmq_msg_recv(&payload, sock_, 0) < 0) {
+                zmq_msg_close(&payload);
+                continue;
+            }
+            // echo 模式：把收到的 payload 原样回送
+            zmq_msg_t id2;
+            zmq_msg_init_size(&id2, last_id.size());
+            std::memcpy(zmq_msg_data(&id2), last_id.data(), last_id.size());
+            zmq_msg_send(&id2, sock_, ZMQ_SNDMORE);
+            zmq_msg_close(&id2);
+            // 直接转发送出去的 payload（转移所有权，避免拷贝）
+            zmq_msg_send(&payload, sock_, 0);
+            zmq_msg_close(&payload);
+        }
+    }
+
+    void* ctx_ = nullptr;
+    void* sock_ = nullptr;
+    std::string endpoint_;
+    std::atomic<bool> running_{false};
+    std::thread worker_;
+};
+
+}  // namespace
+
+// ============ #6 跨主机消息延迟 P99 < 15ms ============
+// 契约：TcpChannel RTT（含 frame encode + ZMQ DEALER 收发 + loopback 网络栈）
+// 由于是 loopback，实测通常 < 1ms；P99 < 15ms 是上限契约。
+static void udaf_bench_tcp_latency_p99(benchmark::State& state) {
+    static TcpBenchFixture* fix = nullptr;
+    static TcpChannel* chan = nullptr;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        fix = new TcpBenchFixture();
+        TcpChannelConfig cfg;
+        cfg.connect_uri = fix->endpoint();
+        cfg.io_timeout = std::chrono::milliseconds(2000);
+        chan = new TcpChannel(cfg);
+    });
+
+    using udaf::ability_b::transport::MessageFrame;
+    std::vector<double> samples;
+    samples.reserve(static_cast<std::size_t>(state.max_iterations));
+
+    for (auto _ : state) {
+        MessageFrame out;
+        out.priority = MessagePriority::Data;
+        const std::string payload_str = "hello-tcp-latency";
+        out.payload.assign(payload_str.begin(), payload_str.end());
+
+        auto t0 = std::chrono::steady_clock::now();
+        (void)chan->send_base(std::move(out));
+        MessageFrame in;
+        (void)chan->recv_base(in, 2000);
+        auto t1 = std::chrono::steady_clock::now();
+        auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+        samples.push_back(static_cast<double>(us) / 1000.0);  // ms
+    }
+
+    if (!samples.empty()) {
+        std::sort(samples.begin(), samples.end());
+        auto p = [&](double q) {
+            std::size_t idx = static_cast<std::size_t>(static_cast<double>(samples.size()) * q);
+            if (idx >= samples.size()) idx = samples.size() - 1;
+            return samples[idx];
+        };
+        state.counters["p50_ms"] = p(0.50);
+        state.counters["p95_ms"] = p(0.95);
+        state.counters["p99_ms"] = p(0.99);
+        state.counters["max_ms"] = samples.back();
+    }
+}
+BENCHMARK(udaf_bench_tcp_latency_p99);
+
+// ============ #8 跨主机吞吐 ≥ 5K msg/s ============
+// 契约：4KB 消息单向往返吞吐 ≥ 5000 msg/s
+// 注：吞吐基准使用 ItemsPerSecond(1) 让 Google Benchmark 计算 msg/s
+static void udaf_bench_tcp_throughput(benchmark::State& state) {
+    static TcpBenchFixture* fix = nullptr;
+    static TcpChannel* chan = nullptr;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        fix = new TcpBenchFixture();
+        TcpChannelConfig cfg;
+        cfg.connect_uri = fix->endpoint();
+        cfg.io_timeout = std::chrono::milliseconds(2000);
+        chan = new TcpChannel(cfg);
+    });
+
+    using udaf::ability_b::transport::MessageFrame;
+    // 4KB payload
+    std::vector<std::uint8_t> payload(4096, 0xAB);
+    for (auto _ : state) {
+        MessageFrame out;
+        out.priority = MessagePriority::Data;
+        out.payload = payload;
+        auto sr = chan->send_base(std::move(out));
+        if (sr != udaf::ability_b::transport::SendResult::Ok) {
+            state.SkipWithError("send failed");
+            return;
+        }
+        MessageFrame in;
+        auto rs = chan->recv_base(in, 2000);
+        if (rs != udaf::ability_b::transport::RecvStatus::Ok) {
+            state.SkipWithError("recv failed");
+            return;
+        }
+        benchmark::DoNotOptimize(in.payload);
+    }
+    state.SetBytesProcessed(int64_t{state.iterations()} * 4096);
+    state.SetItemsProcessed(state.iterations());
+}
+BENCHMARK(udaf_bench_tcp_throughput)->UseRealTime();
+
+// ============ #9 单设备命令往返延迟 P95 < 5ms ============
+// 契约：CmdRequest → CmdExecNode 处理（inproc）→ CmdResult 走 TcpChannel 端到端
+// 简化方案：用 inproc Channel 模拟 cmd_exec_node 处理时间（< 1μs），
+// 加上 TcpChannel RTT 测量整体 P95。
+static void udaf_bench_cmd_latency_p95(benchmark::State& state) {
+    using udaf::ability_b::transport::InprocChannel;
+    using udaf::ability_b::transport::Channel;
+    using udaf::ability_b::transport::MessagePriority;
+
+    static TcpBenchFixture* fix = nullptr;
+    static TcpChannel* chan = nullptr;
+    static Channel<CmdRequest>* mock_exec = nullptr;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        fix = new TcpBenchFixture();
+        TcpChannelConfig cfg;
+        cfg.connect_uri = fix->endpoint();
+        cfg.io_timeout = std::chrono::milliseconds(2000);
+        chan = new TcpChannel(cfg);
+        // 模拟命令执行 worker（inproc，零拷贝）
+        mock_exec = new Channel<CmdRequest>(std::make_unique<InprocChannel>(4096));
+    });
+
+    std::vector<double> samples;
+    samples.reserve(static_cast<std::size_t>(state.max_iterations));
+
+    for (auto _ : state) {
+        CmdRequest req;
+        req.command = "/bin/echo";
+        req.args = {"bench"};
+
+        auto t0 = std::chrono::steady_clock::now();
+        // 客户端发送 → 服务端"执行"（模拟）
+        (void)mock_exec->send(req, MessagePriority::Data);
+        CmdRequest in{};
+        (void)mock_exec->recv(in, 0);
+        // 构造响应 + TcpChannel 回传
+        CmdResult res;
+        res.exit_code = 0;
+        res.stdout_text = "bench\n";
+        using udaf::ability_b::transport::MessageFrame;
+        MessageFrame frame;
+        frame.priority = MessagePriority::Data;
+        const auto& buf = reinterpret_cast<const std::uint8_t*>("ok");
+        frame.payload.assign(buf, buf + 2);
+        (void)chan->send_base(std::move(frame));
+        MessageFrame reply;
+        (void)chan->recv_base(reply, 2000);
+        auto t1 = std::chrono::steady_clock::now();
+        auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+        samples.push_back(static_cast<double>(us) / 1000.0);
+    }
+
+    if (!samples.empty()) {
+        std::sort(samples.begin(), samples.end());
+        auto p = [&](double q) {
+            std::size_t idx = static_cast<std::size_t>(static_cast<double>(samples.size()) * q);
+            if (idx >= samples.size()) idx = samples.size() - 1;
+            return samples[idx];
+        };
+        state.counters["p50_ms"] = p(0.50);
+        state.counters["p95_ms"] = p(0.95);
+        state.counters["p99_ms"] = p(0.99);
+    }
+}
+BENCHMARK(udaf_bench_cmd_latency_p95);
+
+// ============ #10 远程运维 P95 < 200ms ============
+// 契约：远程命令执行端到端（客户端发 → CmdExecNode fork+exec → 返回 stdout）
+// 注：本基准复用 bench/udaf_bench_fork_exec 测过的真实 fork+exec 时延，
+// 这里再加 TcpChannel RTT 模拟跨主机运维流量。P95 上限 200ms。
+static void udaf_bench_remote_ops(benchmark::State& state) {
+    static TcpBenchFixture* fix = nullptr;
+    static TcpChannel* chan = nullptr;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        fix = new TcpBenchFixture();
+        TcpChannelConfig cfg;
+        cfg.connect_uri = fix->endpoint();
+        cfg.io_timeout = std::chrono::milliseconds(2000);
+        chan = new TcpChannel(cfg);
+    });
+
+    std::vector<double> samples;
+    samples.reserve(static_cast<std::size_t>(state.max_iterations));
+
+    for (auto _ : state) {
+        auto t0 = std::chrono::steady_clock::now();
+        // 真实 fork+exec：/bin/echo 是最轻量命令
+        // 通过 ProcessExecutor 模拟远端命令执行（Phase D 实施时切换为真实
+        // CmdExecNode + TLS，本阶段先验证 transport + executor 链路 P95）
+        ProcessExecutor::Options opts;
+        opts.executable = "/bin/echo";
+        opts.allowed_executables = {"/bin/echo"};
+        auto r = ProcessExecutor::execute(opts);
+
+        // 通过 TcpChannel 回传结果（模拟"远端→本地"的运维响应）
+        using udaf::ability_b::transport::MessageFrame;
+        MessageFrame frame;
+        frame.priority = MessagePriority::Data;
+        if (r.is_ok()) {
+            const auto& stdout_text = r.value().stdout_text;
+            const auto* buf = reinterpret_cast<const std::uint8_t*>(stdout_text.data());
+            frame.payload.assign(buf, buf + stdout_text.size());
+        } else {
+            frame.payload.assign({'e','r','r'});
+        }
+        (void)chan->send_base(std::move(frame));
+        MessageFrame reply;
+        (void)chan->recv_base(reply, 2000);
+
+        auto t1 = std::chrono::steady_clock::now();
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+        samples.push_back(static_cast<double>(ms));
+    }
+
+    if (!samples.empty()) {
+        std::sort(samples.begin(), samples.end());
+        auto p = [&](double q) {
+            std::size_t idx = static_cast<std::size_t>(static_cast<double>(samples.size()) * q);
+            if (idx >= samples.size()) idx = samples.size() - 1;
+            return samples[idx];
+        };
+        state.counters["p50_ms"] = p(0.50);
+        state.counters["p95_ms"] = p(0.95);
+        state.counters["p99_ms"] = p(0.99);
+    }
+}
+BENCHMARK(udaf_bench_remote_ops)->UseRealTime();
+
+// ============ #12 文件传输 > 80 MB/s ============
+// 契约：FileXferNode 字节流速率（4MB chunk 持续推送）
+// 注：当前 FileXferNode 未实现，本基准通过 TcpChannel 大块传输模拟
+// 字节流速率上限（loopback 网络栈是瓶颈，不模拟真实跨主机网络）。
+static void udaf_bench_file_xfer(benchmark::State& state) {
+    static TcpBenchFixture* fix = nullptr;
+    static TcpChannel* chan = nullptr;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        fix = new TcpBenchFixture();
+        TcpChannelConfig cfg;
+        cfg.connect_uri = fix->endpoint();
+        cfg.io_timeout = std::chrono::milliseconds(5000);
+        cfg.send_hwm = 64;   // 允许较高的缓冲
+        cfg.recv_hwm = 64;
+        chan = new TcpChannel(cfg);
+    });
+
+    // 4MB chunk（FileXferNode 的默认 chunk 大小）
+    constexpr std::size_t kChunkSize = 4 * 1024 * 1024;
+    std::vector<std::uint8_t> chunk(kChunkSize, 0xCC);
+
+    for (auto _ : state) {
+        // 循环发送 chunk 直到达到 state.max_iterations 次（每次 1 chunk）
+        // 一次 iteration = 一个 chunk
+        using udaf::ability_b::transport::MessageFrame;
+        MessageFrame frame;
+        frame.priority = MessagePriority::Data;
+        frame.payload = chunk;
+        auto sr = chan->send_base(std::move(frame));
+        if (sr != udaf::ability_b::transport::SendResult::Ok) {
+            state.SkipWithError("send failed");
+            return;
+        }
+        MessageFrame reply;
+        auto rs = chan->recv_base(reply, 5000);
+        if (rs != udaf::ability_b::transport::RecvStatus::Ok) {
+            state.SkipWithError("recv failed");
+            return;
+        }
+    }
+    state.SetBytesProcessed(int64_t{state.iterations()} * int64_t{kChunkSize});
+    state.SetItemsProcessed(state.iterations());
+}
+BENCHMARK(udaf_bench_file_xfer)->UseRealTime()->Unit(benchmark::kMillisecond);
 
 BENCHMARK_MAIN();

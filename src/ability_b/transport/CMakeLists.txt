@@ -9,6 +9,7 @@
 
 add_library(udaf_ability_b_transport STATIC
     inproc_channel.cpp
+    tcp_channel.cpp
 )
 
 target_include_directories(udaf_ability_b_transport
@@ -22,6 +23,20 @@ target_link_libraries(udaf_ability_b_transport
         udaf::udaf_core
         Threads::Threads
 )
+
+# TcpChannel 依赖 libzmq（C 接口，无需 cppzmq）
+find_path(UDAF_ZMQ_INCLUDE_DIR zmq.h
+    HINTS /usr/include /usr/local/include
+    REQUIRED
+)
+find_library(UDAF_ZMQ_LIB zmq
+    HINTS /usr/lib /usr/lib/x86_64-linux-gnu /usr/local/lib
+    REQUIRED
+)
+target_include_directories(udaf_ability_b_transport
+    PUBLIC ${UDAF_ZMQ_INCLUDE_DIR}
+)
+target_link_libraries(udaf_ability_b_transport PUBLIC ${UDAF_ZMQ_LIB})
 
 target_compile_features(udaf_ability_b_transport PUBLIC cxx_std_20)
 
