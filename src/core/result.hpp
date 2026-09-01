@@ -53,18 +53,22 @@ public:
 
     // ---------- 状态查询 ----------
 
+    /// @brief 当前是否处于 Ok 状态（持有 T 值）。
     [[nodiscard]] bool is_ok() const noexcept {
         return storage_.index() == 1;
     }
 
+    /// @brief 当前是否处于 Err 状态（持有 ErrorCode）。
     [[nodiscard]] bool is_err() const noexcept {
         return storage_.index() == 2;
     }
 
+    /// @brief 当前是否处于未初始化状态（默认构造或 move-from 后）。
     [[nodiscard]] bool is_uninitialized() const noexcept {
         return storage_.index() == 0;
     }
 
+    /// @brief 上下文布尔转换：仅在 Ok 时为 true，等价于 is_ok()。
     [[nodiscard]] explicit operator bool() const noexcept {
         return is_ok();
     }
@@ -195,16 +199,20 @@ private:
 
 /// Result<void> 特化，仅承载 Ok/ Err 二态。
 /// 与 Result<T> 区别：无 value() 方法（仅 ok()/err()/is_ok()/is_err()/error()）。
+/// 适用于仅需表达"成功或某个失败原因"的纯命令式操作（如 init / start / stop）。
 template <>
 class [[nodiscard]] Result<void> {
 public:
     using value_type = void;
     using error_type = ErrorCode;
 
+    /// @brief 构造 Ok 状态。
     [[nodiscard]] static Result ok() {
         return {State::Ok};
     }
 
+    /// @brief 构造 Err 状态。
+    /// @param code 错误码，参见 ErrorCode 枚举
     [[nodiscard]] static Result err(ErrorCode code) {
         return {State::Err, code};
     }
@@ -216,10 +224,16 @@ public:
     Result& operator=(Result&&) noexcept = default;
     ~Result() = default;
 
+    /// @brief 当前是否处于 Ok 状态。
     [[nodiscard]] bool is_ok() const noexcept { return state_ == State::Ok; }
+
+    /// @brief 当前是否处于 Err 状态。
     [[nodiscard]] bool is_err() const noexcept { return state_ == State::Err; }
+
+    /// @brief 上下文布尔转换：等价于 is_ok()。
     [[nodiscard]] explicit operator bool() const noexcept { return is_ok(); }
 
+    /// @brief 返回错误码；若非 Err 则返回 ErrorCode::OK。
     [[nodiscard]] ErrorCode error() const noexcept { return error_; }
 
     /// 成功时无操作；失败时返回 fn(ErrorCode) 的 Result<void>（用于链式）。

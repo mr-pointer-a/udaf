@@ -23,17 +23,26 @@
 
 namespace udaf::ability_b::port {
 
-/// 端口元数据
+/// @brief 端口元数据，描述单个端口的名称、承载类型与方向。
+///
+/// 缓存于 InputPort / OutputPort 内部，外部通过 info() const& 读取，
+/// 避免每次查询触发 std::type_index 重新构造。
 struct PortInfo {
-    std::string name;
-    std::type_index type_index_ = std::type_index(typeid(void));
-    std::uint32_t schema_version = 0;
-    bool is_input = false;
+    std::string name;                          ///< 端口名（用于诊断与日志）
+    std::type_index type_index_ = std::type_index(typeid(void));  ///< C++ 类型擦除（std::type_index）
+    std::uint32_t schema_version = 0;         ///< 关联 protobuf / 业务 schema 版本号
+    bool is_input = false;                     ///< true = 输入端口；false = 输出端口
 
+    /// @brief 判断是否为输出端口（与 is_input 互斥）。
     [[nodiscard]] bool is_output() const noexcept { return !is_input; }
 };
 
-/// 输入端口（强类型 + 缓存 PortInfo + 内置 SPSC/FIFO）
+/// @brief 输入端口，强类型模板 + 内置线程安全 FIFO 队列。
+///
+/// 缓存 PortInfo 成员（评审 C-4 修复），支持 try_recv 非阻塞与
+/// recv 带超时的阻塞两种取数据模式。HEARTBEAT 始终强制投递：
+/// 由 OutputPort::try_send 走 push()，capacity 满时返回 RESOURCE_BUSY
+/// 而非丢消息（架构 §5.6）。
 template <typename T>
 class InputPort {
 public:
@@ -51,10 +60,10 @@ public:
     InputPort(InputPort&&) noexcept = default;
     InputPort& operator=(InputPort&&) noexcept = default;
 
-    /// 端口元数据（const 引用，评审 C-4）
+    /// @brief 返回端口元数据（const 引用，无拷贝）。
     [[nodiscard]] const PortInfo& info() const noexcept { return info_; }
 
-    /// 尝试取出一条
+    /// @brief 尝试取出一条消息（非阻塞）。
     /// @return Ok(value) 或 Err(BIZ_SERVICE_NOT_FOUND)（队列空）
     [[nodiscard]] core::Result<T> try_recv() noexcept {
         std::lock_guard<std::mutex> lk(mtx_);
@@ -66,7 +75,9 @@ public:
         return core::Result<T>::ok(std::move(v));
     }
 
-    /// 阻塞等待（timeout_ms=-1 永久阻塞，0 非阻塞）
+    /// @brief 阻塞等待直到队列非空或超时。
+    /// @param timeout_ms 超时毫秒数；-1 = 永久阻塞；0 = 非阻塞（等价 try_recv）
+    /// @return Ok(value) 或 Err(NET_TIMEOUT)（超时且仍为空）
     [[nodiscard]] core::Result<T> recv(int timeout_ms) noexcept {
         std::unique_lock<std::mutex> lk(mtx_);
         if (queue_.empty() && timeout_ms != 0) {
@@ -85,16 +96,17 @@ public:
         return core::Result<T>::ok(std::move(v));
     }
 
-    /// 当前大小
+    /// @brief 当前队列长度（线程安全）。
     [[nodiscard]] std::size_t size() const noexcept {
         std::lock_guard<std::mutex> lk(mtx_);
         return queue_.size();
     }
 
-    /// 容量
+    /// @brief 队列容量（0 表示无界）。
     [[nodiscard]] std::size_t capacity() const noexcept { return capacity_; }
 
-    /// 内部 push（output_port → input_port 用）
+    /// @brief 推入一条消息（通常由 OutputPort::try_send 调用）。
+    /// @param v 要推入的值（左值或右值均可，内部移动）
     /// @return Err(RESOURCE_BUSY) 当 capacity > 0 且已满
     [[nodiscard]] core::Result<void> push(T v) noexcept {
         std::lock_guard<std::mutex> lk(mtx_);
@@ -114,7 +126,10 @@ private:
     std::condition_variable cv_;
 };
 
-/// 输出端口
+/// @brief 输出端口，持有对端 InputPort 指针，转发消息到目标队列。
+///
+/// 简化版直接关联 InputPort*；后续可扩展支持 Channel<T> 中转。
+/// HEARTBEAT 优先级由 try_send 自动走 capacity 检查，capacity=0 时无限。
 template <typename T>
 class OutputPort {
 public:
@@ -131,7 +146,10 @@ public:
 
     [[nodiscard]] const PortInfo& info() const noexcept { return info_; }
 
-    /// 尝试发送
+    /// @brief 尝试向对端发送一条消息。
+    /// @param v 要发送的值
+    /// @return Err(NET_NOT_CONNECTED) 当 target_ 为空；
+    ///         Err(RESOURCE_BUSY) 当对端队列满
     [[nodiscard]] core::Result<void> try_send(T v) noexcept {
         if (!target_) {
             return core::Result<void>::err(core::ErrorCode::NET_NOT_CONNECTED);
