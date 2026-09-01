@@ -1518,3 +1518,15 @@ TEST(UdafTransport, EnableBroadcastAfterCloseReturnsError) {
     ASSERT_TRUE(r.is_err());
     EXPECT_EQ(r.error(), ErrorCode::NET_BROADCAST_FAILED);
 }
+
+// 非阻塞 socket 接收，timeout=-1 跳过 select 直接 recvfrom，
+// 无数据时立即返回 EAGAIN → NET_TIMEOUT（覆盖 udp_socket.cpp:194）
+TEST(UdafTransport, RecvNonBlockingNoDataReturnsErr) {
+    auto s = UdpSocket::create(0);
+    ASSERT_TRUE(s.is_ok());
+    // timeout_ms < 0：跳过 select，直接进入 recvfrom
+    auto r = s.value()->recv(-1);
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), ErrorCode::NET_TIMEOUT);
+    s.value()->close();
+}
