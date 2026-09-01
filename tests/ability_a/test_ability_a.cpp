@@ -1496,3 +1496,25 @@ TEST(UdafScanner, PollOnceReceivesFrameFromLoopback) {
 
     scanner->stop();
 }
+
+// ===== F13 UDP 覆盖率补充 =====
+
+// 绑定特权端口（<1024）作为非 root 用户 → bind 返回 EACCES
+// 触发 udp_socket.cpp:50（非 EADDRINUSE 路径）→ 返回 NET_SEND_FAILED
+TEST(UdafTransport, BindPrivilegedPortAsNonRootReturnsNetSendFailed) {
+    auto s = UdpSocket::create(80);  // 特权端口需要 root
+    ASSERT_TRUE(s.is_err());
+    // EACCES 走 udp_socket.cpp:50 的 else 分支，区别于 EADDRINUSE → RESOURCE_BUSY
+    EXPECT_EQ(s.error(), ErrorCode::NET_SEND_FAILED);
+}
+
+// 关闭 fd 后调用 enable_broadcast → setsockopt(-1, ...) 返回 EBADF
+// 触发 udp_socket.cpp:88 → 返回 NET_BROADCAST_FAILED
+TEST(UdafTransport, EnableBroadcastAfterCloseReturnsError) {
+    auto s = UdpSocket::create(0);
+    ASSERT_TRUE(s.is_ok());
+    s.value()->close();
+    auto r = s.value()->enable_broadcast();
+    ASSERT_TRUE(r.is_err());
+    EXPECT_EQ(r.error(), ErrorCode::NET_BROADCAST_FAILED);
+}
