@@ -196,6 +196,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: build-release-${{ github.sha }}
+          path: build-release
       - name: Run perf contracts (29 timing + 4 memory)
         run: |
           BENCH_DIR=build-release bash scripts/check_perf_contracts.sh 2>&1 | tee perf_contracts.log
