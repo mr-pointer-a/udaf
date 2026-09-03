@@ -27,8 +27,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake libgtest-dev libgmock-dev libbenchmark-dev libspdlog-dev libssl-dev libyaml-cpp-dev libzmq3-dev protobuf-compiler libprotobuf-dev libfmt-dev
           # fmt v9 (required by spdlog on Ubuntu 22.04 which bundles fmt v9 headers)
-          curl -sL https://github.com/fmtlib/fmt/archive/refs/tags/9.1.0.tar.gz | tar xz
-          cmake -B /tmp/fmt-build -DFMT_TEST=OFF -DFMT_DOC=OFF -DCMAKE_BUILD_TYPE=Release
+          curl -sL https://github.com/fmtlib/fmt/archive/refs/tags/9.1.0.tar.gz -o /tmp/fmt.tar.gz
+          cd /tmp && tar xzf fmt.tar.gz
+          cmake -B /tmp/fmt-build -DFMT_TEST=OFF -DFMT_DOC=OFF -DCMAKE_BUILD_TYPE=Release -DFMT_INSTALL=ON /tmp/fmt-9.1.0
           cmake --install /tmp/fmt-build --prefix /usr/local
       - name: Configure
         run: |
@@ -51,8 +52,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake libgtest-dev libbenchmark-dev libspdlog-dev libssl-dev libyaml-cpp-dev libzmq3-dev protobuf-compiler libprotobuf-dev libfmt-dev
-          curl -sL https://github.com/fmtlib/fmt/archive/refs/tags/9.1.0.tar.gz | tar xz
-          cmake -B /tmp/fmt-build -DFMT_TEST=OFF -DFMT_DOC=OFF -DCMAKE_BUILD_TYPE=Release
+          curl -sL https://github.com/fmtlib/fmt/archive/refs/tags/9.1.0.tar.gz -o /tmp/fmt.tar.gz
+          cd /tmp && tar xzf fmt.tar.gz
+          cmake -B /tmp/fmt-build -DFMT_TEST=OFF -DFMT_DOC=OFF -DCMAKE_BUILD_TYPE=Release -DFMT_INSTALL=ON /tmp/fmt-9.1.0
           cmake --install /tmp/fmt-build --prefix /usr/local
       - name: Configure
         run: |
@@ -75,8 +77,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cppcheck clang-tidy cmake libgtest-dev libgmock-dev libbenchmark-dev libspdlog-dev libssl-dev libyaml-cpp-dev libzmq3-dev protobuf-compiler libprotobuf-dev libfmt-dev
-          curl -sL https://github.com/fmtlib/fmt/archive/refs/tags/9.1.0.tar.gz | tar xz
-          cmake -B /tmp/fmt-build -DFMT_TEST=OFF -DFMT_DOC=OFF -DCMAKE_BUILD_TYPE=Release
+          curl -sL https://github.com/fmtlib/fmt/archive/refs/tags/9.1.0.tar.gz -o /tmp/fmt.tar.gz
+          cd /tmp && tar xzf fmt.tar.gz
+          cmake -B /tmp/fmt-build -DFMT_TEST=OFF -DFMT_DOC=OFF -DCMAKE_BUILD_TYPE=Release -DFMT_INSTALL=ON /tmp/fmt-9.1.0
           cmake --install /tmp/fmt-build --prefix /usr/local
       - name: cppcheck
         run: |
@@ -231,8 +234,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake libgtest-dev libspdlog-dev libssl-dev libyaml-cpp-dev libfmt-dev
-          curl -sL https://github.com/fmtlib/fmt/archive/refs/tags/9.1.0.tar.gz | tar xz
-          cmake -B /tmp/fmt-build -DFMT_TEST=OFF -DFMT_DOC=OFF -DCMAKE_BUILD_TYPE=Release
+          curl -sL https://github.com/fmtlib/fmt/archive/refs/tags/9.1.0.tar.gz -o /tmp/fmt.tar.gz
+          cd /tmp && tar xzf fmt.tar.gz
+          cmake -B /tmp/fmt-build -DFMT_TEST=OFF -DFMT_DOC=OFF -DCMAKE_BUILD_TYPE=Release -DFMT_INSTALL=ON /tmp/fmt-9.1.0
           cmake --install /tmp/fmt-build --prefix /usr/local
       - name: Configure (stress mode)
         run: |
