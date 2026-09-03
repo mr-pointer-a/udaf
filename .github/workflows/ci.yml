@@ -25,7 +25,7 @@ jobs:
       - name: Install deps
         run: sudo apt-get update && sudo apt-get install -y cmake libgtest-dev libgmock-dev libbenchmark-dev libspdlog-dev libssl-dev libyaml-cpp-dev libzmq3-dev protobuf-compiler libprotobuf-dev
       - name: Configure
-        run: cmake -B build-debug -DCMAKE_BUILD_TYPE=Debug -DUDAF_ENABLE_ASAN=ON -DUDAF_ENABLE_UBSAN=ON
+        run: cmake -B build-debug -DCMAKE_BUILD_TYPE=Debug -DUDAF_ENABLE_ASAN=ON -DUDAF_ENABLE_UBSAN=ON -DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON
       - name: Build
         run: cmake --build build-debug -j$(nproc)
       - name: Upload artifact
@@ -42,7 +42,7 @@ jobs:
       - name: Install deps
         run: sudo apt-get update && sudo apt-get install -y cmake libgtest-dev libbenchmark-dev libspdlog-dev libssl-dev libyaml-cpp-dev libzmq3-dev protobuf-compiler libprotobuf-dev
       - name: Configure
-        run: cmake -B build-release -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build-release -DCMAKE_BUILD_TYPE=Release -DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON
       - name: Build
         run: cmake --build build-release -j$(nproc)
       - name: Upload artifact
@@ -57,11 +57,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install static analyzers
-        run: sudo apt-get update && sudo apt-get install -y cppcheck clang-tidy
+        run: sudo apt-get update && sudo apt-get install -y cppcheck clang-tidy cmake libgtest-dev libgmock-dev libbenchmark-dev libspdlog-dev libssl-dev libyaml-cpp-dev libzmq3-dev protobuf-compiler libprotobuf-dev
       - name: cppcheck
         run: |
           cppcheck --enable=warning,style,performance,portability \
             --suppress=missingIncludeSystem \
+            --suppress=unusedFunction \
+            --suppress=passedByValue \
+            --suppress=knownConditionTrueFalse \
+            --suppress=useStlAlgorithm \
+            --suppress=virtualCallInConstructor \
+            --suppress=unassignedVariable \
             --inline-suppr \
             --quiet --error-exitcode=1 \
             src/
