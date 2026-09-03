@@ -30,7 +30,7 @@ jobs:
           curl -sL https://github.com/fmtlib/fmt/archive/refs/tags/9.1.0.tar.gz -o /tmp/fmt.tar.gz
           mkdir -p "$HOME/.local"
           cd /tmp && rm -rf fmt-build fmt-9.1.0 && tar xzf fmt.tar.gz
-          cmake -B /tmp/fmt-build -DFMT_TEST=OFF -DFMT_DOC=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/.local" /tmp/fmt-9.1.0
+          cmake -B /tmp/fmt-build -DFMT_TEST=OFF -DFMT_DOC=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/.local" -DFMT_HEADER_ONLY=ON /tmp/fmt-9.1.0
           cmake --build /tmp/fmt-build -j$(nproc)
           cmake --install /tmp/fmt-build
       - name: Configure
@@ -57,7 +57,7 @@ jobs:
           curl -sL https://github.com/fmtlib/fmt/archive/refs/tags/9.1.0.tar.gz -o /tmp/fmt.tar.gz
           mkdir -p "$HOME/.local"
           cd /tmp && rm -rf fmt-build fmt-9.1.0 && tar xzf fmt.tar.gz
-          cmake -B /tmp/fmt-build -DFMT_TEST=OFF -DFMT_DOC=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/.local" /tmp/fmt-9.1.0
+          cmake -B /tmp/fmt-build -DFMT_TEST=OFF -DFMT_DOC=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/.local" -DFMT_HEADER_ONLY=ON /tmp/fmt-9.1.0
           cmake --build /tmp/fmt-build -j$(nproc)
           cmake --install /tmp/fmt-build
       - name: Configure
@@ -84,7 +84,7 @@ jobs:
           curl -sL https://github.com/fmtlib/fmt/archive/refs/tags/9.1.0.tar.gz -o /tmp/fmt.tar.gz
           mkdir -p "$HOME/.local"
           cd /tmp && rm -rf fmt-build fmt-9.1.0 && tar xzf fmt.tar.gz
-          cmake -B /tmp/fmt-build -DFMT_TEST=OFF -DFMT_DOC=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/.local" /tmp/fmt-9.1.0
+          cmake -B /tmp/fmt-build -DFMT_TEST=OFF -DFMT_DOC=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/.local" -DFMT_HEADER_ONLY=ON /tmp/fmt-9.1.0
           cmake --build /tmp/fmt-build -j$(nproc)
           cmake --install /tmp/fmt-build
       - name: cppcheck
@@ -253,7 +253,7 @@ jobs:
           curl -sL https://github.com/fmtlib/fmt/archive/refs/tags/9.1.0.tar.gz -o /tmp/fmt.tar.gz
           mkdir -p "$HOME/.local"
           cd /tmp && rm -rf fmt-build fmt-9.1.0 && tar xzf fmt.tar.gz
-          cmake -B /tmp/fmt-build -DFMT_TEST=OFF -DFMT_DOC=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/.local" /tmp/fmt-9.1.0
+          cmake -B /tmp/fmt-build -DFMT_TEST=OFF -DFMT_DOC=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/.local" -DFMT_HEADER_ONLY=ON /tmp/fmt-9.1.0
           cmake --build /tmp/fmt-build -j$(nproc)
           cmake --install /tmp/fmt-build
       - name: Configure (stress mode)
