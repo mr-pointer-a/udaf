@@ -100,16 +100,26 @@ jobs:
             --inline-suppr \
             --quiet --error-exitcode=1 \
             src/
+      - name: Configure (for clang-tidy)
+        run: |
+          # 先配置（不启用 clang-tidy），等 compile_commands.json 产生后再单独运行 clang-tidy
+          cmake -B build-tidy -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
       - name: clang-tidy (debug build)
         run: |
-          # 从 cmake/StaticAnalyzers.cmake 提取 clang-tidy checks 列表
+          # 等待 compile_commands.json 生成后再运行 clang-tidy
           # 从 cmake/StaticAnalyzers.cmake 提取 clang-tidy checks（排除正项，只取 -开头的排除项）
           CLANG_TIDY_CHECKS=$(grep -A100 "^set(UDAF_CLANG_TIDY_CHECKS" cmake/StaticAnalyzers.cmake \
             | grep -E "^\s+-" | grep -vE "^\s+-[a-z]+-\*$" \
             | sed 's/^\s*//' | tr '\n' ',' | sed 's/,$//')
-          cmake -B build-tidy -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_CXX_CLANG_TIDY="clang-tidy;-p;build-tidy;-checks=${CLANG_TIDY_CHECKS}"
-          cmake --build build-tidy -j$(nproc)
+          # 用 clang-tidy 扫描全部 src，不启用编译（-fsyntax-only）
+          find src -name "*.cpp" -o -name "*.hpp" | \
+            xargs clang-tidy -p build-tidy -checks=${CLANG_TIDY_CHECKS} --header-filter='src/.*' 2>&1 | \
+            tee clang_tidy.log
+          # 如果有 error 级别输出（非 warning），则失败
+          if grep -q "error generated" clang_tidy.log; then
+            echo "::error::clang-tidy found errors"
+            exit 1
+          fi
 
   # ---------- Job 4: test ----------
   test:
