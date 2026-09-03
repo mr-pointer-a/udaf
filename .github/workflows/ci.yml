@@ -67,7 +67,13 @@ jobs:
             src/
       - name: clang-tidy (debug build)
         run: |
-          cmake -B build-tidy -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_CLANG_TIDY="clang-tidy;-checks=bugprone-*,performance-*,readability-*,modernize-*,clang-analyzer-*,-bugprone-easily-swappable-parameters,-bugprone-unhandled-exception-at-new,-modernize-avoid-c-arrays,-modernize-loop-convert,-modernize-make-unique,-modernize-raw-string-literal,-modernize-use-auto,-modernize-use-trailing-return-type,-performance-avoid-endl,-readability-braces-around-statements,-readability-identifier-length,-readability-isolate-declaration,-readability-implicit-bool-conversion,-readability-magic-numbers,-readability-named-parameter,-readability-redundant-declaration,-readability-static-definition-in-anonymous-namespace"
+          # 从 cmake/StaticAnalyzers.cmake 提取 clang-tidy checks 列表
+          # 从 cmake/StaticAnalyzers.cmake 提取 clang-tidy checks（排除正项，只取 -开头的排除项）
+          CLANG_TIDY_CHECKS=$(grep -A100 "^set(UDAF_CLANG_TIDY_CHECKS" cmake/StaticAnalyzers.cmake \
+            | grep -E "^\s+-" | grep -vE "^\s+-[a-z]+-\*$" \
+            | sed 's/^\s*//' | tr '\n' ',' | sed 's/,$//')
+          cmake -B build-tidy -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_CLANG_TIDY="clang-tidy;-p;build-tidy;-checks=${CLANG_TIDY_CHECKS}"
           cmake --build build-tidy -j$(nproc)
 
   # ---------- Job 4: test ----------

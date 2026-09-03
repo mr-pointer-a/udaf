@@ -9,10 +9,10 @@
 
 ## 项目状态
 
-**当前版本**：v0.3.14（2026-09-02）
+**当前版本**：v0.3.16（2026-09-03）
 
-五大设计文档全部完成（v1.0 / v2.9 / v2.2 / v0.8 / v0.8），一致性 100% 对齐。
-**11 个核心模块全部实现**，**616 个测试全部通过**（604 单元 + 9 集成 + 1 模糊 + 1 故障注入 + 1 端到端），**源码覆盖率 96.6% lines / 97.3% functions**（src/ 源码口径）。
+五大设计文档全部完成（v1.0 / v2.10 / v2.3 / v0.9 / v0.9），一致性 100% 对齐。
+**11 个核心模块全部实现**，**618 个测试全部通过**（604 单元 + 10 集成 + 1 模糊 + 1 故障注入 + 1 端到端 + 1 e2e），**源码覆盖率 96.6% lines / 97.3% functions**（src/ 源码口径）。
 
 | 阶段 | 内容 | 状态 | 测试 |
 |---|---|---|---|
@@ -25,7 +25,7 @@
 | 集成 | §10.x 跨模块链路 | ✅ | 6 |
 | Fuzz | ASan+UBSan 20 万轮 | ✅ | 0 崩溃 |
 
-**29 项性能契约**：在 `build-release/bench/udaf_bench` 中完整覆盖（吞吐 / 延迟 / 心跳优先级 / fork+exec / 节点冷启动 / 内存峰值等）；v0.3.13 扩展为 39 项（含 AEAD 1MB 大块吞吐 / 审计链校验 / WAL 完整 replay / 拓扑事务批量 commit）。
+**33 项性能契约**：在 `build-release/bench/udaf_bench` 中完整覆盖（吞吐 / 延迟 / 心跳优先级 / fork+exec / 节点冷启动 / 内存峰值等）；v0.3.13 扩展为 39 项（含 AEAD 1MB 大块吞吐 / 审计链校验 / WAL 完整 replay / 拓扑事务批量 commit）。
 
 ---
 
@@ -36,10 +36,10 @@
 | 文档 | 版本 | 用途 |
 |---|---|---|
 | [`01-requirements.md`](../docs/01-requirements.md) | v1.0 | 需求设计 |
-| [`02-architecture.md`](../docs/02-architecture.md) | v2.8 | 架构设计 |
-| [`03-detailed-design.md`](../docs/03-detailed-design.md) | v2.1 | 概要设计 |
-| [`04-module-design.md`](../docs/04-module-design.md) | v0.7 | 详细设计 |
-| [`05-test-plan.md`](../docs/05-test-plan.md) | v0.7 | 测试方案 |
+| [`02-architecture.md`](../docs/02-architecture.md) | v2.10 | 架构设计 |
+| [`03-detailed-design.md`](../docs/03-detailed-design.md) | v2.3 | 概要设计 |
+| [`04-module-design.md`](../docs/04-module-design.md) | v0.9 | 详细设计 |
+| [`05-test-plan.md`](../docs/05-test-plan.md) | v0.9 | 测试方案 |
 | [`adr/`](../docs/adr/) | - | 11 份架构决策记录 |
 
 实现细节在 [`docs/dependencies.md`](docs/dependencies.md)。

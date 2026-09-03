@@ -23,6 +23,7 @@ add_subdirectory(cli)            # 阶段 E4
 add_subdirectory(fuzz)           # 模糊测试
 add_subdirectory(fault_injection) # LD_PRELOAD 故障注入框架自检
 add_subdirectory(integration)     # 跨模块集成测试
+add_subdirectory(e2e)            # 端到端演示
 
 # ---------- ctest 配置 ----------
 
