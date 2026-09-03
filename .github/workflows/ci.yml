@@ -254,7 +254,7 @@ jobs:
       - name: Run tests to generate .gcda files
         run: |
           # 运行测试（产生 .gcda 文件），允许部分测试失败
-          ctest --test-dir build-debug --output-on-failure -E "NOT_BUILT|udaf_bench" || true
+          cd build-debug && ctest --output-on-failure -E "NOT_BUILT|udaf_bench" || true
       - name: Capture coverage
         run: |
           WORKSPACE="$GITHUB_WORKSPACE/build-debug"
