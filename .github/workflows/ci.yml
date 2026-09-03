@@ -26,6 +26,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake libgtest-dev libgmock-dev libbenchmark-dev libspdlog-dev libssl-dev libyaml-cpp-dev libzmq3-dev protobuf-compiler libprotobuf-dev
+          # Remove any pre-installed fmt v8 library that spdlog might link against
+          sudo apt-get remove -y libfmt-dev libfmt8 2>/dev/null || true
           # fmt v9 (required by spdlog on Ubuntu 22.04 which bundles fmt v9 headers)
           curl -sL https://github.com/fmtlib/fmt/archive/refs/tags/9.1.0.tar.gz -o /tmp/fmt.tar.gz
           mkdir -p "$HOME/.local"
@@ -54,6 +56,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake libgtest-dev libbenchmark-dev libspdlog-dev libssl-dev libyaml-cpp-dev libzmq3-dev protobuf-compiler libprotobuf-dev
+          sudo apt-get remove -y libfmt-dev libfmt8 2>/dev/null || true
           curl -sL https://github.com/fmtlib/fmt/archive/refs/tags/9.1.0.tar.gz -o /tmp/fmt.tar.gz
           mkdir -p "$HOME/.local"
           cd /tmp && rm -rf fmt-build fmt-9.1.0 && tar xzf fmt.tar.gz
@@ -81,6 +84,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cppcheck clang-tidy cmake libgtest-dev libgmock-dev libbenchmark-dev libspdlog-dev libssl-dev libyaml-cpp-dev libzmq3-dev protobuf-compiler libprotobuf-dev
+          sudo apt-get remove -y libfmt-dev libfmt8 2>/dev/null || true
           curl -sL https://github.com/fmtlib/fmt/archive/refs/tags/9.1.0.tar.gz -o /tmp/fmt.tar.gz
           mkdir -p "$HOME/.local"
           cd /tmp && rm -rf fmt-build fmt-9.1.0 && tar xzf fmt.tar.gz
@@ -250,6 +254,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake libgtest-dev libspdlog-dev libssl-dev libyaml-cpp-dev
+          sudo apt-get remove -y libfmt-dev libfmt8 2>/dev/null || true
           curl -sL https://github.com/fmtlib/fmt/archive/refs/tags/9.1.0.tar.gz -o /tmp/fmt.tar.gz
           mkdir -p "$HOME/.local"
           cd /tmp && rm -rf fmt-build fmt-9.1.0 && tar xzf fmt.tar.gz
