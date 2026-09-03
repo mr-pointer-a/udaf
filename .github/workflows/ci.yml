@@ -217,6 +217,9 @@ jobs:
       - name: Run perf contracts (29 timing + 4 memory)
         run: |
           export LD_LIBRARY_PATH="$HOME/.local/lib:$LD_LIBRARY_PATH"
+          ls -la "$GITHUB_WORKSPACE/build-release/bench/udaf_bench" || echo "binary not found"
+          ldd "$GITHUB_WORKSPACE/build-release/bench/udaf_bench" | grep -E "not found|libfmt|libspdlog" || true
+          "$GITHUB_WORKSPACE/build-release/bench/udaf_bench" --benchmark_min_time=0.01s --benchmark_format=console 2>&1 | head -20 || echo "direct run failed: $?"
           BENCH_DIR="$GITHUB_WORKSPACE/build-release" bash scripts/check_perf_contracts.sh 2>&1 | tee perf_contracts.log
           # 退出码 0/1/2：0=全PASS, 1=SOFT, 2=HARD
           if [ ${PIPESTATUS[0]} -gt 1 ]; then
@@ -255,7 +258,7 @@ jobs:
           lcov --remove "$WORKSPACE/coverage.info" '/usr/*' '*/_deps/*' '*/tests/*' --output-file "$WORKSPACE/coverage.info"
           lcov --list "$WORKSPACE/coverage.info"
       - name: Generate HTML report
-        run: genhtml "$GITHUB_WORKSPACE/build-debug/coverage.info" --output-directory "$GITHUB_WORKSPACE/coverage_html"
+        run: genhtml --ignore-errors source "$GITHUB_WORKSPACE/build-debug/coverage.info" --output-directory "$GITHUB_WORKSPACE/coverage_html"
       - name: Upload coverage
         uses: actions/upload-artifact@v4
         with:
