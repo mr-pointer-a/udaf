@@ -21,7 +21,9 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-BENCH_BIN="$PROJECT_DIR/build-bench/bench/udaf_bench"
+# CI artifact 解压为 build-release 或本地 build-bench
+BENCH_DIR="${BENCH_DIR:-$PROJECT_DIR/build-bench}"
+BENCH_BIN="$BENCH_DIR/bench/udaf_bench"
 
 # ---------- 软/硬阈值倍数（架构评审约定） ----------
 SOFT_MULT=1.2

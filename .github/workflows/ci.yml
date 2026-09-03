@@ -152,8 +152,9 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: build-debug-${{ github.sha }}
+          path: build-debug
       - name: Run unit + integration tests
-        run: cd build-debug && ctest --output-on-failure -E "NOT_BUILT|udaf_bench"
+        run: ctest --output-on-failure -E "NOT_BUILT|udaf_bench"
       - name: Upload test report
         if: always()
         uses: actions/upload-artifact@v4
@@ -171,11 +172,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: build-release-${{ github.sha }}
+          path: build-release
       - name: Run benchmarks (smoke)
-        run: cd build-release && ctest -R udaf_bench --output-on-failure
+        run: ctest -R udaf_bench --output-on-failure
       - name: Full benchmark (manual trigger)
         if: github.event_name == 'workflow_dispatch'
-        run: cd build-release && ./bench/udaf_bench --benchmark_min_time=1s --benchmark_format=json --benchmark_out=bench_results.json
+        run: ./bench/udaf_bench --benchmark_min_time=1s --benchmark_format=json --benchmark_out=bench_results.json
       - name: Upload benchmark results
         if: always()
         uses: actions/upload-artifact@v4
@@ -196,7 +198,7 @@ jobs:
           name: build-release-${{ github.sha }}
       - name: Run perf contracts (29 timing + 4 memory)
         run: |
-          bash scripts/check_perf_contracts.sh 2>&1 | tee perf_contracts.log
+          BENCH_DIR=build-release bash scripts/check_perf_contracts.sh 2>&1 | tee perf_contracts.log
           # 退出码 0/1/2：0=全PASS, 1=SOFT, 2=HARD
           if [ ${PIPESTATUS[0]} -gt 1 ]; then
             echo "::error::Hard perf contract failure"
