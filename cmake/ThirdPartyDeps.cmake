@@ -31,6 +31,20 @@ endif()
 
 # spdlog（≥ 1.10）
 find_package(spdlog 1.10 QUIET NO_DEFAULT_PATH PATHS /usr/lib/x86_64-linux-gnu/cmake)
+if(NOT spdlog_FOUND)
+    # 手动创建 imported target（fallback for CI multiarch）
+    find_path(_spdlog_include_dir NAMES spdlog/spdlog.h PATHS /usr/include)
+    find_library(_spdlog_lib NAMES spdlog PATHS /usr/lib/x86_64-linux-gnu)
+    if(_spdlog_include_dir AND _spdlog_lib)
+        add_library(spdlog::spdlog SHARED IMPORTED)
+        set_target_properties(spdlog::spdlog PROPERTIES
+            IMPORTED_LOCATION "${_spdlog_lib}"
+            INTERFACE_INCLUDE_DIRECTORIES "${_spdlog_include_dir}")
+        set(spdlog_FOUND TRUE)
+    endif()
+    unset(_spdlog_include_dir)
+    unset(_spdlog_lib)
+endif()
 
 # protobuf lite（≥ 3.21）
 find_package(Protobuf 3.21 QUIET)
@@ -38,30 +52,44 @@ find_package(Protobuf 3.21 QUIET)
 # ---------- 测试 / 基准依赖（仅开发机） ----------
 
 if(UDAF_ENABLE_TESTS)
-    find_path(_gtest_cmake_dir NAMES GTestConfig.cmake PATHS /usr/lib/x86_64-linux-gnu/cmake/GTest)
-    if(_gtest_cmake_dir)
-        get_filename_component(_gtest_cmake_dir_parent ${_gtest_cmake_dir} DIRECTORY)
-        list(APPEND CMAKE_PREFIX_PATH "${_gtest_cmake_dir_parent}")
-    endif()
     find_package(GTest 1.14 QUIET NO_DEFAULT_PATH PATHS /usr/lib/x86_64-linux-gnu/cmake)
-    unset(_gtest_cmake_dir)
-    unset(_gtest_cmake_dir_parent)
     if(NOT GTest_FOUND)
-        message(STATUS "[ThirdPartyDeps] GTest 未通过 find_package 找到，将尝试本地编译")
+        # fallback: 手动构建 imported target
+        find_path(_gtest_include_dir NAMES gtest/gtest.h PATHS /usr/include)
+        find_library(_gtest_lib NAMES gtest PATHS /usr/lib/x86_64-linux-gnu)
+        find_library(_gtest_main_lib NAMES gtest_main PATHS /usr/lib/x86_64-linux-gnu)
+        if(_gtest_include_dir AND _gtest_lib AND _gtest_main_lib)
+            add_library(GTest::gtest SHARED IMPORTED)
+            set_target_properties(GTest::gtest PROPERTIES
+                IMPORTED_LOCATION "${_gtest_lib}"
+                INTERFACE_INCLUDE_DIRECTORIES "${_gtest_include_dir}")
+            add_library(GTest::gtest_main SHARED IMPORTED)
+            set_target_properties(GTest::gtest_main PROPERTIES
+                IMPORTED_LOCATION "${_gtest_main_lib}"
+                INTERFACE_INCLUDE_DIRECTORIES "${_gtest_include_dir}")
+            set(GTest_FOUND TRUE)
+        endif()
+        unset(_gtest_include_dir)
+        unset(_gtest_lib)
+        unset(_gtest_main_lib)
     endif()
 endif()
 
 if(UDAF_ENABLE_BENCH)
-    find_path(_benchmark_cmake_dir NAMES benchmarkConfig.cmake PATHS /usr/lib/x86_64-linux-gnu/cmake/benchmark)
-    if(_benchmark_cmake_dir)
-        get_filename_component(_benchmark_cmake_dir_parent ${_benchmark_cmake_dir} DIRECTORY)
-        list(APPEND CMAKE_PREFIX_PATH "${_benchmark_cmake_dir_parent}")
-    endif()
     find_package(benchmark 1.8 QUIET NO_DEFAULT_PATH PATHS /usr/lib/x86_64-linux-gnu/cmake)
-    unset(_benchmark_cmake_dir)
-    unset(_benchmark_cmake_dir_parent)
     if(NOT benchmark_FOUND)
-        message(STATUS "[ThirdPartyDeps] Google Benchmark 未找到")
+        # fallback: 手动构建 imported target
+        find_path(_benchmark_include_dir NAMES benchmark/benchmark.h PATHS /usr/include)
+        find_library(_benchmark_lib NAMES benchmark PATHS /usr/lib/x86_64-linux-gnu)
+        if(_benchmark_include_dir AND _benchmark_lib)
+            add_library(benchmark::benchmark SHARED IMPORTED)
+            set_target_properties(benchmark::benchmark PROPERTIES
+                IMPORTED_LOCATION "${_benchmark_lib}"
+                INTERFACE_INCLUDE_DIRECTORIES "${_benchmark_include_dir}")
+            set(benchmark_FOUND TRUE)
+        endif()
+        unset(_benchmark_include_dir)
+        unset(_benchmark_lib)
     endif()
 endif()
 
