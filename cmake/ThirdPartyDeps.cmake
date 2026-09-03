@@ -19,7 +19,7 @@ find_package(OpenSSL 3.0 REQUIRED)
 
 # yaml-cpp（≥ 0.8）
 find_package(yaml-cpp 0.8 QUIET)
-if(NOT yaml-cpp_FOUND)
+if(NOT yaml_cpp_FOUND)
     message(WARNING "未找到 yaml-cpp ≥ 0.8，将使用内置头文件")
 endif()
 
@@ -101,7 +101,7 @@ set(UDAF_PUBLIC_DEPS
     OpenSSL::Crypto
 )
 
-if(yaml-cpp_FOUND)
+if(yaml_cpp_FOUND)
     list(APPEND UDAF_PUBLIC_DEPS yaml-cpp::yaml-cpp)
 endif()
 

@@ -25,7 +25,7 @@ target_link_libraries(udaf_core
         Threads::Threads
         spdlog::spdlog
 )
-if(yaml-cpp_FOUND)
+if(yaml_cpp_FOUND)
     target_link_libraries(udaf_core PUBLIC yaml-cpp::yaml-cpp)
 endif()
 
