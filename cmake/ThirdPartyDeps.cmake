@@ -30,7 +30,7 @@ if(NOT fmt_FOUND)
 endif()
 
 # spdlog（≥ 1.10）
-find_package(spdlog 1.10 QUIET NO_DEFAULT_PATH PATHS /usr/lib/x86_64-linux-gnu/cmake)
+find_package(spdlog 1.10 QUIET)
 if(NOT spdlog_FOUND)
     # 手动创建 imported target（fallback for CI multiarch）
     find_path(_spdlog_include_dir NAMES spdlog/spdlog.h PATHS /usr/include)
@@ -52,7 +52,7 @@ find_package(Protobuf 3.21 QUIET)
 # ---------- 测试 / 基准依赖（仅开发机） ----------
 
 if(UDAF_ENABLE_TESTS)
-    find_package(GTest 1.14 QUIET NO_DEFAULT_PATH PATHS /usr/lib/x86_64-linux-gnu/cmake)
+    find_package(GTest 1.14 QUIET)
     if(NOT GTest_FOUND)
         # fallback: 手动构建 imported target（STATIC 因为 CI 只有 .a 库）
         find_path(_gtest_include_dir NAMES gtest/gtest.h PATHS /usr/include)
@@ -76,7 +76,7 @@ if(UDAF_ENABLE_TESTS)
 endif()
 
 if(UDAF_ENABLE_BENCH)
-    find_package(benchmark 1.8 QUIET NO_DEFAULT_PATH PATHS /usr/lib/x86_64-linux-gnu/cmake)
+    find_package(benchmark 1.8 QUIET)
     if(NOT benchmark_FOUND)
         # fallback: 手动构建 imported target
         find_path(_benchmark_include_dir NAMES benchmark/benchmark.h PATHS /usr/include)
