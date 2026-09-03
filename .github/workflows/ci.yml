@@ -41,7 +41,7 @@ jobs:
           cmake --install /tmp/spdlog-build
       - name: Configure
         run: |
-          export CMAKE_PREFIX_PATH="$HOME/.local":$CMAKE_PREFIX_PATH
+          export CMAKE_PREFIX_PATH="$HOME/.local:/usr":$CMAKE_PREFIX_PATH
           cmake -B build-debug -DCMAKE_BUILD_TYPE=Debug -DUDAF_ENABLE_ASAN=ON -DUDAF_ENABLE_UBSAN=ON
       - name: Build
         run: cmake --build build-debug -j$(nproc)
@@ -75,7 +75,7 @@ jobs:
           cmake --install /tmp/spdlog-build
       - name: Configure
         run: |
-          export CMAKE_PREFIX_PATH="$HOME/.local":$CMAKE_PREFIX_PATH
+          export CMAKE_PREFIX_PATH="$HOME/.local:/usr":$CMAKE_PREFIX_PATH
           cmake -B build-release -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build-release -j$(nproc)
@@ -123,7 +123,7 @@ jobs:
       - name: Configure (for clang-tidy)
         run: |
           # 先配置（不启用 clang-tidy），等 compile_commands.json 产生后再单独运行 clang-tidy
-          export CMAKE_PREFIX_PATH="$HOME/.local":$CMAKE_PREFIX_PATH
+          export CMAKE_PREFIX_PATH="$HOME/.local:/usr":$CMAKE_PREFIX_PATH
           cmake -B build-tidy -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
       - name: clang-tidy (debug build)
         run: |
@@ -286,7 +286,7 @@ jobs:
           cmake --install /tmp/spdlog-build
       - name: Configure (stress mode)
         run: |
-          export CMAKE_PREFIX_PATH="$HOME/.local":$CMAKE_PREFIX_PATH
+          export CMAKE_PREFIX_PATH="$HOME/.local:/usr":$CMAKE_PREFIX_PATH
           cmake -B build-stress -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUDAF_ENABLE_STRESS=ON
       - name: Build
         run: cmake --build build-stress -j$(nproc)

@@ -19,7 +19,9 @@ find_package(OpenSSL 3.0 REQUIRED)
 
 # yaml-cpp（≥ 0.8）
 find_package(yaml-cpp 0.8 QUIET)
-if(NOT yaml_cpp_FOUND)
+# yaml-cpp cmake config 不设置 yaml_cpp_FOUND（它只创建 target），
+# 用 target 存在性判断
+if(NOT TARGET yaml-cpp::yaml-cpp)
     message(WARNING "未找到 yaml-cpp ≥ 0.8，将使用内置头文件")
 endif()
 
@@ -101,7 +103,7 @@ set(UDAF_PUBLIC_DEPS
     OpenSSL::Crypto
 )
 
-if(yaml_cpp_FOUND)
+if(TARGET yaml-cpp::yaml-cpp)
     list(APPEND UDAF_PUBLIC_DEPS yaml-cpp::yaml-cpp)
 endif()
 
