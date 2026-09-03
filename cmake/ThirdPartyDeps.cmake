@@ -36,7 +36,7 @@ if(NOT spdlog_FOUND)
     find_path(_spdlog_include_dir NAMES spdlog/spdlog.h PATHS /usr/include)
     find_library(_spdlog_lib NAMES spdlog PATHS /usr/lib/x86_64-linux-gnu)
     if(_spdlog_include_dir AND _spdlog_lib)
-        add_library(spdlog::spdlog SHARED IMPORTED)
+        add_library(spdlog::spdlog STATIC IMPORTED)
         set_target_properties(spdlog::spdlog PROPERTIES
             IMPORTED_LOCATION "${_spdlog_lib}"
             INTERFACE_INCLUDE_DIRECTORIES "${_spdlog_include_dir}")
@@ -54,16 +54,16 @@ find_package(Protobuf 3.21 QUIET)
 if(UDAF_ENABLE_TESTS)
     find_package(GTest 1.14 QUIET NO_DEFAULT_PATH PATHS /usr/lib/x86_64-linux-gnu/cmake)
     if(NOT GTest_FOUND)
-        # fallback: 手动构建 imported target
+        # fallback: 手动构建 imported target（STATIC 因为 CI 只有 .a 库）
         find_path(_gtest_include_dir NAMES gtest/gtest.h PATHS /usr/include)
         find_library(_gtest_lib NAMES gtest PATHS /usr/lib/x86_64-linux-gnu)
         find_library(_gtest_main_lib NAMES gtest_main PATHS /usr/lib/x86_64-linux-gnu)
         if(_gtest_include_dir AND _gtest_lib AND _gtest_main_lib)
-            add_library(GTest::gtest SHARED IMPORTED)
+            add_library(GTest::gtest STATIC IMPORTED)
             set_target_properties(GTest::gtest PROPERTIES
                 IMPORTED_LOCATION "${_gtest_lib}"
                 INTERFACE_INCLUDE_DIRECTORIES "${_gtest_include_dir}")
-            add_library(GTest::gtest_main SHARED IMPORTED)
+            add_library(GTest::gtest_main STATIC IMPORTED)
             set_target_properties(GTest::gtest_main PROPERTIES
                 IMPORTED_LOCATION "${_gtest_main_lib}"
                 INTERFACE_INCLUDE_DIRECTORIES "${_gtest_include_dir}")
@@ -82,7 +82,7 @@ if(UDAF_ENABLE_BENCH)
         find_path(_benchmark_include_dir NAMES benchmark/benchmark.h PATHS /usr/include)
         find_library(_benchmark_lib NAMES benchmark PATHS /usr/lib/x86_64-linux-gnu)
         if(_benchmark_include_dir AND _benchmark_lib)
-            add_library(benchmark::benchmark SHARED IMPORTED)
+            add_library(benchmark::benchmark STATIC IMPORTED)
             set_target_properties(benchmark::benchmark PROPERTIES
                 IMPORTED_LOCATION "${_benchmark_lib}"
                 INTERFACE_INCLUDE_DIRECTORIES "${_benchmark_include_dir}")
