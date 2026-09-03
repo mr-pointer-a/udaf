@@ -42,7 +42,7 @@ jobs:
       - name: Configure
         run: |
           export CMAKE_PREFIX_PATH="$HOME/.local:/usr":$CMAKE_PREFIX_PATH
-          cmake -B build-debug -DCMAKE_BUILD_TYPE=Debug -DUDAF_ENABLE_ASAN=ON -DUDAF_ENABLE_UBSAN=ON
+          cmake -B build-debug -DCMAKE_BUILD_TYPE=Debug -DUDAF_ENABLE_ASAN=ON -DUDAF_ENABLE_UBSAN=ON -DUDAF_ENABLE_COVERAGE=ON
       - name: Build
         run: cmake --build build-debug -j$(nproc)
       - name: Upload artifact
@@ -177,7 +177,7 @@ jobs:
         run: ctest -R udaf_bench --output-on-failure
       - name: Full benchmark (manual trigger)
         if: github.event_name == 'workflow_dispatch'
-        run: ./bench/udaf_bench --benchmark_min_time=1s --benchmark_format=json --benchmark_out=bench_results.json
+        run: ./build-release/bench/udaf_bench --benchmark_min_time=1s --benchmark_format=json --benchmark_out=bench_results.json
       - name: Upload benchmark results
         if: always()
         uses: actions/upload-artifact@v4
@@ -226,6 +226,10 @@ jobs:
           path: build-debug
       - name: Install lcov
         run: sudo apt-get install -y lcov
+      - name: Run tests to generate .gcda files
+        run: |
+          # 运行测试（产生 .gcda 文件）
+          ctest --output-on-failure -E "NOT_BUILT|udaf_bench"
       - name: Capture coverage
         run: |
           WORKSPACE="$GITHUB_WORKSPACE/build-debug"
