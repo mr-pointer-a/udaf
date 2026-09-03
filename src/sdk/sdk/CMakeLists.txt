@@ -7,6 +7,7 @@ target_link_libraries(udaf_sdk PUBLIC
     udaf::udaf_core
     udaf::udaf_audit
     udaf::udaf_ability_a_registry
-    udaf::udaf_ability_a_trust)
+    udaf::udaf_ability_a_trust
+    udaf::udaf_ability_b_topology)
 target_compile_features(udaf_sdk PUBLIC cxx_std_20)
 add_library(udaf::udaf_sdk ALIAS udaf_sdk)

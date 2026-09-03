@@ -4,6 +4,7 @@ add_executable(test_sdk test_sdk.cpp)
 target_link_libraries(test_sdk
     PRIVATE
         udaf::udaf_sdk
+        udaf::udaf_ability_b_topology
         GTest::gtest_main
 )
 

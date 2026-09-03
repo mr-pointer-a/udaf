@@ -16,6 +16,7 @@
 
 #include "ability_a/registry/service_registry.hpp"
 #include "ability_a/trust/peer_whitelist.hpp"
+#include "ability_b/topology/topology.hpp"
 #include "audit/audit.hpp"
 #include "core/error_code.hpp"
 #include "core/result.hpp"
@@ -74,6 +75,10 @@ public:
 
     /// 拓扑摘要（节点 + 边计数 + 节点列表）
     [[nodiscard]] TopologySummary topology_summary() noexcept;
+
+    /// 提交拓扑事务
+    [[nodiscard]] core::Result<void>
+    topology_commit(udaf::ability_b::topology::TopologyTransaction&& tx) noexcept;
 
     /// 推 / 拉文件（占位：返回审计 sequence 表示"任务已创建"）
     [[nodiscard]] core::Result<std::uint64_t>

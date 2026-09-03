@@ -3,6 +3,7 @@
 
 #include "ability_a/registry/service_registry.hpp"
 #include "ability_a/trust/peer_whitelist.hpp"
+#include "ability_b/topology/topology.hpp"
 #include "audit/audit.hpp"
 
 #include <sstream>
@@ -11,10 +12,11 @@
 namespace udaf::sdk {
 
 struct Client::Impl {
-    ClientConfig                                          cfg;
-    std::shared_ptr<udaf::ability_a::registry::ServiceRegistry> registry;
-    std::shared_ptr<udaf::audit::AuditLogger>             audit_logger;
-    std::shared_ptr<udaf::ability_a::trust::PeerWhitelist> whitelist;
+    ClientConfig                                                   cfg;
+    std::shared_ptr<udaf::ability_a::registry::ServiceRegistry>    registry;
+    std::shared_ptr<udaf::audit::AuditLogger>                    audit_logger;
+    std::shared_ptr<udaf::ability_a::trust::PeerWhitelist>       whitelist;
+    std::shared_ptr<udaf::ability_b::topology::Topology>          topology;
 };
 
 Client::Client(ClientConfig cfg) {
@@ -22,6 +24,7 @@ Client::Client(ClientConfig cfg) {
     impl->cfg = std::move(cfg);
     impl->registry = std::make_shared<udaf::ability_a::registry::ServiceRegistry>();
     impl->whitelist = std::make_shared<udaf::ability_a::trust::PeerWhitelist>();
+    impl->topology = std::make_shared<udaf::ability_b::topology::Topology>();
     if (!impl->cfg.audit_path.empty()) {
         impl->audit_logger = std::make_shared<udaf::audit::AuditLogger>(impl->cfg.audit_path);
     }
@@ -78,6 +81,11 @@ TopologySummary Client::topology_summary() noexcept {
         s.nodes.push_back(e.node_id_);
     }
     return s;
+}
+
+core::Result<void>
+Client::topology_commit(udaf::ability_b::topology::TopologyTransaction&& tx) noexcept {
+    return impl_->topology->commit(std::move(tx));
 }
 
 core::Result<std::uint64_t>

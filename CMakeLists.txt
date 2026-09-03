@@ -160,7 +160,10 @@ add_executable(udaf_e2e tests/e2e/udaf_e2e.cpp)
 target_link_libraries(udaf_e2e PRIVATE
     udaf::udaf_sdk
     udaf::udaf_audit
-    udaf::udaf_ability_a_registry)
+    udaf::udaf_ability_a_registry
+    udaf::udaf_ability_b_topology
+    udaf::udaf_ability_c_nodes
+    Threads::Threads)
 target_compile_features(udaf_e2e PRIVATE cxx_std_20)
 
 # ---------- deb 打包（CPack） ----------
