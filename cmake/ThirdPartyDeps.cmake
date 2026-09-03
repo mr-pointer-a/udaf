@@ -22,7 +22,20 @@ find_package(yaml-cpp 0.8 QUIET)
 # yaml-cpp cmake config 不设置 yaml_cpp_FOUND（它只创建 target），
 # 用 target 存在性判断
 if(NOT TARGET yaml-cpp::yaml-cpp)
-    message(WARNING "未找到 yaml-cpp ≥ 0.8，将使用内置头文件")
+    # fallback：CI apt upgrade 会降级 libyaml-cpp-dev，手动创建 imported target
+    find_path(_yaml_cpp_include_dir NAMES yaml-cpp/yaml.h yaml.h PATH_SUFFIXES include)
+    find_library(_yaml_cpp_lib NAMES yaml-cpp yaml_cpp PATHS /usr/lib/x86_64-linux-gnu)
+    if(_yaml_cpp_include_dir AND _yaml_cpp_lib)
+        add_library(yaml-cpp::yaml-cpp STATIC IMPORTED)
+        set_target_properties(yaml-cpp::yaml-cpp PROPERTIES
+            IMPORTED_LOCATION "${_yaml_cpp_lib}"
+            INTERFACE_INCLUDE_DIRECTORIES "${_yaml_cpp_include_dir}")
+    endif()
+    unset(_yaml_cpp_include_dir)
+    unset(_yaml_cpp_lib)
+    if(NOT TARGET yaml-cpp::yaml-cpp)
+        message(WARNING "未找到 yaml-cpp ≥ 0.8，将使用内置头文件")
+    endif()
 endif()
 
 # fmt（≥ 9.0，header-only）
