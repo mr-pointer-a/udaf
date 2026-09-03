@@ -192,11 +192,28 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - name: Download release artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: build-release-${{ github.sha }}
-          path: build-release
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libgtest-dev libbenchmark-dev libssl-dev libyaml-cpp-dev libzmq3-dev protobuf-compiler libprotobuf-dev
+          # Build fmt v9 header-only
+          curl -sL https://github.com/fmtlib/fmt/archive/refs/tags/9.1.0.tar.gz -o /tmp/fmt.tar.gz
+          mkdir -p "$HOME/.local"
+          cd /tmp && rm -rf fmt-build fmt-9.1.0 && tar xzf fmt.tar.gz
+          cmake -B /tmp/fmt-build -DFMT_TEST=OFF -DFMT_DOC=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/.local" -DFMT_HEADER_ONLY=ON /tmp/fmt-9.1.0
+          cmake --build /tmp/fmt-build -j$(nproc)
+          cmake --install /tmp/fmt-build
+          # Build spdlog from source
+          curl -sL https://github.com/gabime/spdlog/archive/refs/tags/v1.12.0.tar.gz -o /tmp/spdlog.tar.gz
+          cd /tmp && rm -rf spdlog-build spdlog-1.12.0 && tar xzf spdlog.tar.gz
+          cmake -B /tmp/spdlog-build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/.local" -DSPDLOG_BUILD_SHARED=OFF -DSPDLOG_FMT_EXTERNAL=ON -DSPDLOG_FMT_HEADER_ONLY=ON /tmp/spdlog-1.12.0
+          cmake --build /tmp/spdlog-build -j$(nproc)
+          cmake --install /tmp/spdlog-build
+      - name: Configure + build bench
+        run: |
+          export CMAKE_PREFIX_PATH="$HOME/.local:/usr":$CMAKE_PREFIX_PATH
+          cmake -B build-release -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-release --target udaf_bench -j$(nproc)
       - name: Run perf contracts (29 timing + 4 memory)
         run: |
           BENCH_DIR="$GITHUB_WORKSPACE/build-release" bash scripts/check_perf_contracts.sh 2>&1 | tee perf_contracts.log
