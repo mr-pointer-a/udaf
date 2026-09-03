@@ -110,7 +110,7 @@ minimal)
     install_pkgs "${RUNTIME_DEPS[@]}" "${TOOLCHAIN_DEPS[@]}"
     ;;
 runtime)
-    install_pkgs libzmq5 libssl3 libfmt9 libspdlog1.12 libyaml-cpp0.8 libprotobuf-lite32t64
+    install_pkgs libzmq5 libssl3 libfmt9 libspdlog1.12 libyaml-cpp0.8 libprotobuf-dev
     ;;
 full|*)
     # 运行时 + 编译时 + 工具链 + 静态分析 + 覆盖率

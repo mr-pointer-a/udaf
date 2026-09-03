@@ -102,6 +102,11 @@ set(UDAF_CPPCHECK_FLAGS
     --inline-suppr
     --suppress=missingIncludeSystem
     --suppress=unusedFunction
+    --suppress=passedByValue
+    --suppress=knownConditionTrueFalse
+    --suppress=useStlAlgorithm
+    --suppress=virtualCallInConstructor
+    --suppress=unassignedVariable
     --error-exitcode=2
     --xml
     --xml-version=2

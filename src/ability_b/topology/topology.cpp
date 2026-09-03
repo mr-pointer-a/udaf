@@ -116,8 +116,8 @@ std::vector<PeerNode> Topology::nodes() const noexcept {
     std::lock_guard<std::mutex> lk(mtx_);
     std::vector<PeerNode> out;
     out.reserve(nodes_.size());
-    for (const auto& [k, v] : nodes_) {
-        (void)k;
+    for (const auto& [_k, v] : nodes_) {
+        (void)_k;
         out.push_back(v);
     }
     return out;

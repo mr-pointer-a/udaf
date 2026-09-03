@@ -52,7 +52,8 @@ std::vector<WhitelistEntry> PeerWhitelist::snapshot() const noexcept {
     std::lock_guard<std::mutex> lk(mtx_);
     std::vector<WhitelistEntry> out;
     out.reserve(entries_.size());
-    for (const auto& [k, v] : entries_) {
+    for (const auto& [_k, v] : entries_) {
+        (void)_k;
         out.push_back(v);
     }
     return out;
