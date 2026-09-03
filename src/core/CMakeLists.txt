@@ -24,8 +24,10 @@ target_link_libraries(udaf_core
     PUBLIC
         Threads::Threads
         spdlog::spdlog
-        yaml-cpp::yaml-cpp
 )
+if(yaml-cpp_FOUND)
+    target_link_libraries(udaf_core PUBLIC yaml-cpp::yaml-cpp)
+endif()
 
 target_compile_features(udaf_core PUBLIC cxx_std_20)
 
