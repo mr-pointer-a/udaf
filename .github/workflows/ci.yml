@@ -244,25 +244,45 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - name: Download debug artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: build-debug-${{ github.sha }}
-          path: build-debug
-      - name: Install lcov
-        run: sudo apt-get install -y lcov
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libgtest-dev libssl-dev libyaml-cpp-dev libzmq3-dev protobuf-compiler libprotobuf-dev lcov
+          # Build benchmark from source
+          curl -sL https://github.com/google/benchmark/archive/refs/tags/v1.8.3.tar.gz -o /tmp/benchmark.tar.gz
+          mkdir -p "$HOME/.local"
+          cd /tmp && rm -rf benchmark-build benchmark-1.8.3 && tar xzf benchmark.tar.gz
+          cmake -B /tmp/benchmark-build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/.local" -DBENCHMARK_ENABLE_GTEST_TESTS=OFF -DBENCHMARK_DOWNLOAD_DEPENDENCIES=ON /tmp/benchmark-1.8.3
+          cmake --build /tmp/benchmark-build -j$(nproc)
+          cmake --install /tmp/benchmark-build
+          # Build fmt v9 header-only
+          curl -sL https://github.com/fmtlib/fmt/archive/refs/tags/9.1.0.tar.gz -o /tmp/fmt.tar.gz
+          cd /tmp && rm -rf fmt-build fmt-9.1.0 && tar xzf fmt.tar.gz
+          cmake -B /tmp/fmt-build -DFMT_TEST=OFF -DFMT_DOC=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/.local" -DFMT_HEADER_ONLY=ON /tmp/fmt-9.1.0
+          cmake --build /tmp/fmt-build -j$(nproc)
+          cmake --install /tmp/fmt-build
+          # Build spdlog from source
+          curl -sL https://github.com/gabime/spdlog/archive/refs/tags/v1.12.0.tar.gz -o /tmp/spdlog.tar.gz
+          cd /tmp && rm -rf spdlog-build spdlog-1.12.0 && tar xzf spdlog.tar.gz
+          cmake -B /tmp/spdlog-build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/.local" -DSPDLOG_BUILD_SHARED=OFF -DSPDLOG_FMT_EXTERNAL=ON -DSPDLOG_FMT_HEADER_ONLY=ON /tmp/spdlog-1.12.0
+          cmake --build /tmp/spdlog-build -j$(nproc)
+          cmake --install /tmp/spdlog-build
+      - name: Configure + build (coverage only, no ASAN)
+        run: |
+          export CMAKE_PREFIX_PATH="$HOME/.local:/usr":$CMAKE_PREFIX_PATH
+          cmake -B build-cov -DCMAKE_BUILD_TYPE=Debug -DUDAF_ENABLE_COVERAGE=ON -DUDAF_ENABLE_ASAN=OFF -DUDAF_ENABLE_UBSAN=OFF
+          cmake --build build-cov -j$(nproc)
       - name: Run tests to generate .gcda files
         run: |
-          # 运行测试（产生 .gcda 文件），允许部分测试失败
-          cd build-debug && ctest --output-on-failure -E "NOT_BUILT|udaf_bench" || true
+          cd build-cov && ctest --output-on-failure -E "NOT_BUILT|udaf_bench" || true
       - name: Capture coverage
         run: |
-          WORKSPACE="$GITHUB_WORKSPACE/build-debug"
+          WORKSPACE="$GITHUB_WORKSPACE/build-cov"
           lcov --capture --directory "$WORKSPACE" --output-file "$WORKSPACE/coverage.info" --rc lcov_branch_coverage=1
           lcov --remove "$WORKSPACE/coverage.info" '/usr/*' '*/_deps/*' '*/tests/*' --output-file "$WORKSPACE/coverage.info"
           lcov --list "$WORKSPACE/coverage.info"
       - name: Generate HTML report
-        run: genhtml --ignore-errors source "$GITHUB_WORKSPACE/build-debug/coverage.info" --output-directory "$GITHUB_WORKSPACE/coverage_html"
+        run: genhtml --ignore-errors source "$GITHUB_WORKSPACE/build-cov/coverage.info" --output-directory "$GITHUB_WORKSPACE/coverage_html"
       - name: Upload coverage
         uses: actions/upload-artifact@v4
         with:
@@ -270,7 +290,7 @@ jobs:
           path: $GITHUB_WORKSPACE/coverage_html/
       - name: Check coverage threshold (90%)
         run: |
-          LINES=$(lcov --summary "$GITHUB_WORKSPACE/build-debug/coverage.info" 2>&1 | grep "lines" | awk '{print $2}' | tr -d '%')
+          LINES=$(lcov --summary "$GITHUB_WORKSPACE/build-cov/coverage.info" 2>&1 | grep "lines" | awk '{print $2}' | tr -d '%')
           echo "Lines coverage: ${LINES}%"
           if (( $(echo "$LINES < 90" | bc -l) )); then
             echo "::error::Coverage dropped below 90% threshold"
