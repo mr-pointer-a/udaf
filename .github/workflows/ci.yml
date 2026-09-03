@@ -30,7 +30,8 @@ jobs:
           curl -sL https://github.com/fmtlib/fmt/archive/refs/tags/9.1.0.tar.gz -o /tmp/fmt.tar.gz
           cd /tmp && tar xzf fmt.tar.gz
           cmake -B /tmp/fmt-build -DFMT_TEST=OFF -DFMT_DOC=OFF -DCMAKE_BUILD_TYPE=Release -DFMT_INSTALL=ON /tmp/fmt-9.1.0
-          cmake --install /tmp/fmt-build --prefix /usr/local
+          cmake --build /tmp/fmt-build -j$(nproc)
+          sudo cmake --install /tmp/fmt-build --prefix /usr/local
       - name: Configure
         run: |
           export CMAKE_PREFIX_PATH=/usr/local:$CMAKE_PREFIX_PATH
@@ -55,7 +56,8 @@ jobs:
           curl -sL https://github.com/fmtlib/fmt/archive/refs/tags/9.1.0.tar.gz -o /tmp/fmt.tar.gz
           cd /tmp && tar xzf fmt.tar.gz
           cmake -B /tmp/fmt-build -DFMT_TEST=OFF -DFMT_DOC=OFF -DCMAKE_BUILD_TYPE=Release -DFMT_INSTALL=ON /tmp/fmt-9.1.0
-          cmake --install /tmp/fmt-build --prefix /usr/local
+          cmake --build /tmp/fmt-build -j$(nproc)
+          sudo cmake --install /tmp/fmt-build --prefix /usr/local
       - name: Configure
         run: |
           export CMAKE_PREFIX_PATH=/usr/local:$CMAKE_PREFIX_PATH
@@ -80,7 +82,8 @@ jobs:
           curl -sL https://github.com/fmtlib/fmt/archive/refs/tags/9.1.0.tar.gz -o /tmp/fmt.tar.gz
           cd /tmp && tar xzf fmt.tar.gz
           cmake -B /tmp/fmt-build -DFMT_TEST=OFF -DFMT_DOC=OFF -DCMAKE_BUILD_TYPE=Release -DFMT_INSTALL=ON /tmp/fmt-9.1.0
-          cmake --install /tmp/fmt-build --prefix /usr/local
+          cmake --build /tmp/fmt-build -j$(nproc)
+          sudo cmake --install /tmp/fmt-build --prefix /usr/local
       - name: cppcheck
         run: |
           cppcheck --enable=warning,style,performance,portability \
@@ -237,7 +240,8 @@ jobs:
           curl -sL https://github.com/fmtlib/fmt/archive/refs/tags/9.1.0.tar.gz -o /tmp/fmt.tar.gz
           cd /tmp && tar xzf fmt.tar.gz
           cmake -B /tmp/fmt-build -DFMT_TEST=OFF -DFMT_DOC=OFF -DCMAKE_BUILD_TYPE=Release -DFMT_INSTALL=ON /tmp/fmt-9.1.0
-          cmake --install /tmp/fmt-build --prefix /usr/local
+          cmake --build /tmp/fmt-build -j$(nproc)
+          sudo cmake --install /tmp/fmt-build --prefix /usr/local
       - name: Configure (stress mode)
         run: |
           export CMAKE_PREFIX_PATH=/usr/local:$CMAKE_PREFIX_PATH
