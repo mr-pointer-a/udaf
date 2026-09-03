@@ -30,7 +30,7 @@ if(NOT fmt_FOUND)
 endif()
 
 # spdlog（≥ 1.10）
-find_package(spdlog 1.10 QUIET)
+find_package(spdlog 1.10 QUIET HINTS /usr/lib/x86_64-linux-gnu)
 
 # protobuf lite（≥ 3.21）
 find_package(Protobuf 3.21 QUIET)
@@ -38,14 +38,14 @@ find_package(Protobuf 3.21 QUIET)
 # ---------- 测试 / 基准依赖（仅开发机） ----------
 
 if(UDAF_ENABLE_TESTS)
-    find_package(GTest 1.14 QUIET)
+    find_package(GTest 1.14 QUIET HINTS /usr/lib/x86_64-linux-gnu)
     if(NOT GTest_FOUND)
         message(STATUS "[ThirdPartyDeps] GTest 未通过 find_package 找到，将尝试本地编译")
     endif()
 endif()
 
 if(UDAF_ENABLE_BENCH)
-    find_package(benchmark 1.8 QUIET)
+    find_package(benchmark 1.8 QUIET HINTS /usr/lib/x86_64-linux-gnu)
     if(NOT benchmark_FOUND)
         message(STATUS "[ThirdPartyDeps] Google Benchmark 未找到")
     endif()
