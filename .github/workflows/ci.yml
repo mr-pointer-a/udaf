@@ -222,16 +222,16 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: build-debug-${{ github.sha }}
+          path: build-debug
       - name: Install lcov
         run: sudo apt-get install -y lcov
       - name: Capture coverage
         run: |
-          cd build-debug
           lcov --capture --directory . --output-file coverage.info --ignore-errors mismatch --rc lcov_branch_coverage=1
           lcov --remove coverage.info '/usr/*' '*/_deps/*' '*/tests/*' --output-file coverage.info
           lcov --list coverage.info
       - name: Generate HTML report
-        run: genhtml build-debug/coverage.info --output-directory build-debug/coverage_html
+        run: genhtml coverage.info --output-directory coverage_html
       - name: Upload coverage
         uses: actions/upload-artifact@v4
         with:
