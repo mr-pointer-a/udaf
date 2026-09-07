@@ -35,15 +35,23 @@ Advertiser::create(AdvertisementPayload payload,
 Advertiser::~Advertiser() { stop(); }
 
 core::Result<void> Advertiser::start() noexcept {
-    if (running_.exchange(true)) {
+    State expected = State::kStopped;
+    if (!state_.compare_exchange_strong(expected, State::kStarting)) {
         return core::Result<void>::err(core::ErrorCode::RESOURCE_BUSY);
     }
-    thread_ = std::thread([this] { run(); });
+    thread_ = std::thread([this] {
+        state_.store(State::kRunning);
+        run();
+    });
+    // 等线程就绪（state 已被 store 为 kRunning）后再返回
+    while (state_.load() == State::kStarting) {
+        std::this_thread::yield();
+    }
     return core::Result<void>::ok();
 }
 
 void Advertiser::stop() noexcept {
-    if (!running_.exchange(false)) return;
+    if (state_.exchange(State::kStopped) == State::kStopped) return;
     if (thread_.joinable()) thread_.join();
     if (sock_) sock_->close();
 }
@@ -96,7 +104,7 @@ Advertiser::broadcast_once() noexcept {
 }
 
 void Advertiser::run() noexcept {
-    while (running_.load()) {
+    while (state_.load() == State::kRunning) {
         auto r = broadcast_once();
         if (r.is_err()) {
             udaf::core::Logger::instance().log_with_error(
@@ -105,7 +113,7 @@ void Advertiser::run() noexcept {
         }
         // 睡眠（用小切片响应 stop）
         auto end = std::chrono::steady_clock::now() + cfg_.period;
-        while (running_.load() &&
+        while (state_.load() == State::kRunning &&
                std::chrono::steady_clock::now() < end) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }

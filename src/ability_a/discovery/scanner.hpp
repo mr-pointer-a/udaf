@@ -5,6 +5,7 @@
 //   - 重放防护：nonce 去重（窗口 5 分钟）
 //   - shared_mutex 多读单写
 //   - MAC 校验失败静默丢弃
+//   - 状态机（STOPPED/STARTING/RUNNING）避免 start() 并发竞争
 
 #ifndef UDAF_ABILITY_A_DISCOVERY_SCANNER_HPP
 #define UDAF_ABILITY_A_DISCOVERY_SCANNER_HPP
@@ -52,7 +53,7 @@ public:
 
     core::Result<void> start() noexcept;
     void stop() noexcept;
-    [[nodiscard]] bool running() const noexcept { return running_.load(); }
+    [[nodiscard]] bool running() const noexcept { return state_.load() == State::kRunning; }
 
     /// 接收一条（同步 + 非阻塞）：返回 Ok(true) 有新数据；Err(NET_TIMEOUT) 无数据
     [[nodiscard]] core::Result<bool>
@@ -71,8 +72,11 @@ public:
 private:
     Scanner() = default;
 
+    /// 状态机：避免 start() 竞争（exchange 后线程未就绪时第二次 start 误判为 ok）
+    enum class State : std::uint8_t { kStopped = 0, kStarting = 1, kRunning = 2 };
+    std::atomic<State> state_{State::kStopped};
+
     std::thread thread_;
-    std::atomic<bool> running_{false};
     udaf::ability_a::registry::ServiceRegistry* registry_ = nullptr;
     ScannerConfig cfg_;
     std::vector<std::uint8_t> psk_;

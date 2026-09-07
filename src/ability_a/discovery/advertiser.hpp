@@ -2,7 +2,7 @@
 //
 // 设计要点：
 //   - 定期广播 AdvertisementPayload（CLAUDE.md §3.8 防 O(N²) 风暴：广播 1/30s）
-//   - 后台 std::thread + std::atomic<bool> running
+//   - 后台 std::thread + 状态机（避免 start() 竞争）
 //   - 加密走 PSK AEAD（auth_types::SecretKey）
 
 #ifndef UDAF_ABILITY_A_DISCOVERY_ADVERTISER_HPP
@@ -52,7 +52,7 @@ public:
     core::Result<void> start() noexcept;
     /// 停止
     void stop() noexcept;
-    [[nodiscard]] bool running() const noexcept { return running_.load(); }
+    [[nodiscard]] bool running() const noexcept { return state_.load() == State::kRunning; }
 
     /// 手动触发一次广播（测试用）
     [[nodiscard]] core::Result<std::size_t>
@@ -63,12 +63,14 @@ private:
 
     void run() noexcept;
 
+    enum class State : std::uint8_t { kStopped = 0, kStarting = 1, kRunning = 2 };
+    std::atomic<State> state_{State::kStopped};
+
     AdvertisementPayload payload_;
     AdvertiserConfig cfg_;
     std::vector<std::uint8_t> psk_;
     std::unique_ptr<udaf::ability_a::transport::UdpSocket> sock_;
     std::thread thread_;
-    std::atomic<bool> running_{false};
 };
 
 }  // namespace udaf::ability_a::discovery

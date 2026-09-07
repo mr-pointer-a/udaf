@@ -30,11 +30,15 @@ Scanner::create(udaf::ability_a::registry::ServiceRegistry* registry,
 Scanner::~Scanner() { stop(); }
 
 core::Result<void> Scanner::start() noexcept {
-    if (running_.exchange(true)) {
+    State expected = State::kStopped;
+    if (!state_.compare_exchange_strong(expected, State::kStarting)) {
         return core::Result<void>::err(core::ErrorCode::RESOURCE_BUSY);
     }
     thread_ = std::thread([this] {
-        while (running_.load()) {
+        // 必须在循环前把 state 提升为 kRunning；
+        // 此时 stop() 看到的中间状态 kStarting，会等我们 store 完再 join
+        state_.store(State::kRunning);
+        while (state_.load() == State::kRunning) {
             auto r = poll_once();
             if (r.is_err() && r.error() != udaf::core::ErrorCode::NET_TIMEOUT) {
                 udaf::core::Logger::instance().log_with_error(
@@ -42,11 +46,16 @@ core::Result<void> Scanner::start() noexcept {
             }
         }
     });
+    // 等线程就绪（state 已被 store 为 kRunning）后再返回，
+    // 确保 start() 返回后 stop() 看到的总是 kRunning，不会漏交换
+    while (state_.load() == State::kStarting) {
+        std::this_thread::yield();
+    }
     return core::Result<void>::ok();
 }
 
 void Scanner::stop() noexcept {
-    if (!running_.exchange(false)) return;
+    if (state_.exchange(State::kStopped) == State::kStopped) return;
     if (sock_) sock_->close();
     if (thread_.joinable()) thread_.join();
 }
